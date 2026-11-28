@@ -334,3 +334,31 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 
 The scenes: one export a BSP (`tools/rt_truth/scenes.json`, "any_bsp"), kept on the 5900X in
 `~/goat-rig/rt2-emitters-more/`.
+
+## Lighting the lightmap alone used (2026-11-28)
+A BSP lit live drops its lightmap, so every input only Bungie's lightmap tool read is lost there unless the pass makes
+it light. `python3 tools/rt2_lightdata_audit.py maps/*.map [--json out.json]` lists them for each map from the
+tags (light tags on placed objects, shader radiosity, the sky's ambients and lights, which BSPs are live). All 23
+campaign and multiplayer maps:
+
+| input (field) | what the bake did | live today | instances | where it shows |
+|---|---|---|---|---|
+| light tag radiosity (0xD4/0xD8) on a placed object, with a cone and a lens flare | a spot | real: the baked-light spots (dynamic_lights.c, a50 rule, k 0.446) | 585 | a50 floodlights, c10, d20, damnation |
+| the same, no cone (a point) | a point light | was LOST, now real (a spot whose cone is the whole sphere, the same k) | 323 static | b40/c40 Forerunner spotlights (180) and Covenant torches (75), damnation (25), carousel/ratrace (18), fog lights |
+| the same, no lens flare and not dynamic (the game makes no light datum) | a light | was LOST, now real (from the object's attachment, at its marker) | 716 static | holo lights on consoles (a50/d20 purple 0.35; b30/c10/c20/b40 blue 0.05), b30/c10 "generic light" fixtures (95) |
+| on bipeds, vehicles, weapons (hunters' fuel rods, the Monitor) | not baked (not static) | not wanted | 48 | |
+| shader radiosity power, BSP surfaces | area emitters | solved lamps (25 BSPs) or the tags' emitters x 0.36 | 282 (shader, map) pairs | every level |
+| shader radiosity power, object shaders | (unverified) | approximated: object lamps from the drawn glow (x5.36), not the tag power | 42 (shader, map) pairs | MP teleporter shields, b40 volume lights, the Monitor |
+| shader radiosity tint (light through a transparent surface) | tinted transmission | LOST (rays pass glass untinted) | 237 (shader, map) pairs with a tint | small |
+| sky outdoor ambient (0x48/0x54) | dome on exterior clusters | real: the dome, the real-sky k | every sky-lit BSP | |
+| sky lights (0xC4), "affects exteriors/interiors" | sun and fills by cluster kind | real: traced everywhere they reach (shadow rays, not the flag) | every sky | |
+| sky indoor ambient (0x38/0x44) | uniform ambient on interior clusters | LOST in exterior views of interior clusters of a sky-lit BSP; absorbed by the lamp scales in solved BSPs | b40/c40 0.3, c20 0.4, c10 0.15, carousel 0.12, MP test skies 20 | b40 bsp1 (20 interior clusters), c40 bsp1 (22), beavercreek (2) |
+
+Double counting: the solved lamps were fitted to the bake with the object lights' light in it (and d20/a50's fixture
+glow as groups), so a BSP whose lamps are solved adds no baked-light spots (c10 bsp1/2/4 "ground bright", d20 bsp2/3
+"bright spot" were added twice before; b40 bsp9/10, c40 bsp0/10, d20 bsp2/3, c10 bsp1/2/4 hold newly real lights).
+They come back there only when a solve takes them as known sources.
+
+Open: the one k (0.446, fitted on a50's spots) leaves b40's torches far under the bake's pools (the torch region live
+about x0.04 of classic, the torch itself adding a few percent): the bake's point lights, or that region's other
+light, are not yet explained.

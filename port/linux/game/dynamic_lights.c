@@ -74,6 +74,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "render_enumerate.h"
 #include "memory/data.h"
 #include "tag_files/tag_files.h"
+#include "objects/object_definitions.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -528,7 +529,12 @@ reach: where its light on axis falls to DYNAMIC_LIGHTS_BAKED_LEAST. A light
 the game draws (flagged dynamic) is the game's already. Lit with the
 lightmap (the setting off, or a level that keeps its lightmap), none: the
 bake has them. The object a light is on gives no object lamps then
-(world_rt.c: its lens's glow is that light, seen). */
+(world_rt.c: its lens's glow is that light, seen). The same rule takes
+every light the bake had (tools/rt2_lightdata_audit.py lists them for each
+level): a point (no cone) as a spot whose cone is the whole sphere; one the
+game makes no datum for (neither dynamic nor with a lens flare) from its
+object's attachment; none in a BSP whose lamps were solved from the bake
+(lt_emitters_live), which holds their light already. */
 
 /* the k: the lightmap tool's intensity to the pass's power, a50's
 floodlights' (levels\a50\devices\light_ground's "light ground spot":
@@ -547,7 +553,7 @@ reach's bounds (world units) */
 colour's linear by: a point's from its reach, so the baked lights are
 spots, a point one a spot with no cone) */
 #define DYNAMIC_LIGHTS_BAKED_SPOT_K 1.009f
-#define DYNAMIC_LIGHTS_BAKED_OBJECTS 64
+#define DYNAMIC_LIGHTS_BAKED_OBJECTS MAXIMUM_LIGHTS_PER_WINDOW
 
 /* (object_lights.c's light_datum, as far as its intensity scale) */
 struct dynamic_lights_light_datum
@@ -604,6 +610,191 @@ int dynamic_lights_fixture_lit(long id)
 	return FALSE;
 }
 
+/* (the light tag's flags, bit 0 dynamic, and its lens flare's tag index:
+light_new makes a light datum only for a tag with either) */
+#define DYNAMIC_LIGHTS_TAG_FLAGS 0x0
+#define DYNAMIC_LIGHTS_TAG_LENS_FLARE_INDEX 0xB8
+/* a light with no cone (a point: its cutoff cosine -1) is a spot whose
+cone is the whole sphere, so every baked light takes the one rule, the
+spot's k: its cutoff cosine this, its falloff a hair inside */
+#define DYNAMIC_LIGHTS_BAKED_POINT_CUTOFF -1.0f
+/* the objects whose attachments may hold a baked light with no light
+datum: the static placements the lightmap tool baked (scenery, light
+fixtures, machines, controls) */
+#define DYNAMIC_LIGHTS_BAKED_OBJECT_MASK (_object_mask_scenery | _object_mask_device)
+
+/* a light tag's radiosity, the lightmap tool's: FALSE for one it did not
+bake (no radiosity intensity); its cone's cosines as the pass takes them
+(a point's the whole sphere) */
+static boolean dynamic_lights_baked_definition(char const *definition, float *intensity, real_rgb_color *color,
+	float *inner, float *outer)
+{
+	memcpy(intensity, definition + DYNAMIC_LIGHTS_TAG_RADIOSITY_INTENSITY, sizeof(*intensity));
+	memcpy(color, definition + DYNAMIC_LIGHTS_TAG_RADIOSITY_COLOR, sizeof(*color));
+	memcpy(inner, definition + DYNAMIC_LIGHTS_TAG_COSINE_FALLOFF, sizeof(*inner));
+	memcpy(outer, definition + DYNAMIC_LIGHTS_TAG_COSINE_CUTOFF, sizeof(*outer));
+	if (!(*intensity > 0.0f) || !(*intensity < 1.0e6f))
+		return FALSE;
+	if (!(*outer > -1.0f && *outer < 1.0f))
+		*outer = DYNAMIC_LIGHTS_BAKED_POINT_CUTOFF;
+	if (!(*inner > *outer + 0.001f) || *inner > 1.0f)
+		*inner = MIN(*outer + 0.001f, 1.0f);
+	return TRUE;
+}
+
+/* one baked light as a light of the frame (the a50 rule: colour x
+intensity x DYNAMIC_LIGHTS_BAKED_K, a spot of the tag's cone); the count
+after it */
+static long dynamic_lights_baked_add(long count, real_point3d const *position, real_vector3d const *forward,
+	float intensity, real_rgb_color const *color, float inner, float outer, long object_index,
+	unsigned long long key)
+{
+	struct halo_dynamic_light *out;
+	short clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+	short cluster_count;
+	struct location location;
+	real_vector3d to;
+	float power[3], strongest, reach;
+	int channel;
+
+	if (count >= MAXIMUM_LIGHTS_PER_WINDOW)
+		return count;
+	power[0] = color->red * intensity * DYNAMIC_LIGHTS_BAKED_K;
+	power[1] = color->green * intensity * DYNAMIC_LIGHTS_BAKED_K;
+	power[2] = color->blue * intensity * DYNAMIC_LIGHTS_BAKED_K;
+	strongest = MAX(power[0], MAX(power[1], power[2]));
+	if (!(strongest > 0.0f))
+		return count;
+	reach = sqrtf(strongest / DYNAMIC_LIGHTS_BAKED_LEAST);
+	reach = reach < DYNAMIC_LIGHTS_BAKED_REACH_LEAST ? DYNAMIC_LIGHTS_BAKED_REACH_LEAST :
+		reach > DYNAMIC_LIGHTS_BAKED_REACH_MOST ? DYNAMIC_LIGHTS_BAKED_REACH_MOST : reach;
+	vector_from_points3d(&render.camera.position, position, &to);
+	if (magnitude3d(&to) - reach > DYNAMIC_LIGHTS_BAKED_RANGE)
+		return count;
+	scenario_location_from_point(&location, (real_point3d *)position);
+	if (location.cluster_index == NONE)
+		return count;
+	cluster_count = door_portals_clusters_in_sphere(location.cluster_index, (real_point3d *)position, reach,
+		MAXIMUM_CLUSTERS_PER_STRUCTURE, clusters);
+	out = &dynamic_lights.lights[count];
+	out->position[0] = position->x;
+	out->position[1] = position->y;
+	out->position[2] = position->z;
+	out->radius = reach;
+	/* (lt_lights.c takes the colour to linear and by the spot's k) */
+	for (channel = 0; channel < 3; channel++)
+		out->color[channel] = powf(power[channel] / DYNAMIC_LIGHTS_BAKED_SPOT_K, 1.0f / 2.2f);
+	out->axis[0] = forward->i;
+	out->axis[1] = forward->j;
+	out->axis[2] = forward->k;
+	/* (its cone as an own light's: scale (cos - outer), offset -scale
+	outer; a point's the whole sphere, so the pass takes it as a spot, the
+	spot's k, not a point's k from its reach) */
+	out->cone_scale = 1.0f / (inner - outer);
+	out->cone_offset = -out->cone_scale * outer;
+	out->flags = 0;
+	dynamic_lights.owners[count] = 0;
+	dynamic_lights.objects[count] = object_index;
+	dynamic_lights.keys[count] = key;
+	dynamic_lights.baked[count] = FALSE;
+	dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
+	/* (the object it is on: its lamps, its lens's glow, are this light now;
+	one out of range keeps its lamps) */
+	if (object_index != NONE && dynamic_lights_baked_object_count < DYNAMIC_LIGHTS_BAKED_OBJECTS)
+		dynamic_lights_baked_objects[dynamic_lights_baked_object_count++] = object_index;
+	return count + 1;
+}
+
+/* the baked lights the game makes no light datum for (light_new: a tag
+neither dynamic nor with a lens flare; b30's and c10's "generic light"
+fixtures, the consoles' holo lights), from the placed objects' attachments,
+at the attachment's first marker as light_new's would be */
+static unsigned char dynamic_lights_datumless_known[0x10000]; /* 0 unknown, 1 none, 2 some */
+static void const *dynamic_lights_datumless_scenario;
+
+static boolean dynamic_lights_datumless_attachment(struct object_attachment_definition const *attachment)
+{
+	char const *definition;
+	long lens_flare;
+	unsigned long flags;
+
+	if (attachment->type.index == NONE || attachment->type.group_tag != DYNAMIC_LIGHTS_LIGHT_TAG)
+		return FALSE;
+	definition = (char const *)tag_get(DYNAMIC_LIGHTS_LIGHT_TAG, attachment->type.index);
+	if (!definition)
+		return FALSE;
+	memcpy(&flags, definition + DYNAMIC_LIGHTS_TAG_FLAGS, sizeof(flags));
+	memcpy(&lens_flare, definition + DYNAMIC_LIGHTS_TAG_LENS_FLARE_INDEX, sizeof(lens_flare));
+	return !TEST_FLAG(flags, 0) && lens_flare == NONE;
+}
+
+static long dynamic_lights_datumless(long count)
+{
+	struct object_iterator iterator;
+	struct object_datum *object;
+
+	if (dynamic_lights_datumless_scenario != (void const *)global_scenario_try_and_get())
+	{
+		dynamic_lights_datumless_scenario = (void const *)global_scenario_try_and_get();
+		memset(dynamic_lights_datumless_known, 0, sizeof(dynamic_lights_datumless_known));
+	}
+	object_iterator_new(&iterator, DYNAMIC_LIGHTS_BAKED_OBJECT_MASK, 0);
+	while ((object = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
+	{
+		long definition_index = object->definition_index;
+		unsigned char *known = &dynamic_lights_datumless_known[definition_index & 0xFFFF];
+		struct object_definition const *definition;
+		long attachment_index;
+
+		if (*known == 1)
+			continue;
+		definition = (struct object_definition const *)tag_get(OBJECT_DEFINITION_TAG, definition_index);
+		if (!definition)
+			continue;
+		if (*known == 0)
+		{
+			*known = 1;
+			for (attachment_index = 0; attachment_index < definition->object.attachments.count &&
+				attachment_index < MAXIMUM_NUMBER_OF_ATTACHMENTS_PER_OBJECT; attachment_index++)
+			{
+				struct object_attachment_definition const *attachment = TAG_BLOCK_GET_ELEMENT(
+					&definition->object.attachments, attachment_index, struct object_attachment_definition);
+				char const *light;
+				float intensity, inner, outer;
+				real_rgb_color color;
+
+				if (!dynamic_lights_datumless_attachment(attachment))
+					continue;
+				light = (char const *)tag_get(DYNAMIC_LIGHTS_LIGHT_TAG, attachment->type.index);
+				if (dynamic_lights_baked_definition(light, &intensity, &color, &inner, &outer))
+					*known = 2;
+			}
+			if (*known == 1)
+				continue;
+		}
+		for (attachment_index = 0; attachment_index < definition->object.attachments.count &&
+			attachment_index < MAXIMUM_NUMBER_OF_ATTACHMENTS_PER_OBJECT; attachment_index++)
+		{
+			struct object_attachment_definition const *attachment = TAG_BLOCK_GET_ELEMENT(
+				&definition->object.attachments, attachment_index, struct object_attachment_definition);
+			struct object_marker marker;
+			float intensity, inner, outer;
+			real_rgb_color color;
+			long object_index = iterator.index;
+
+			if (!dynamic_lights_datumless_attachment(attachment) ||
+				!dynamic_lights_baked_definition((char const *)tag_get(DYNAMIC_LIGHTS_LIGHT_TAG, attachment->type.index),
+					&intensity, &color, &inner, &outer))
+				continue;
+			object_get_marker_by_name(object_index, attachment->marker_name, &marker, 1);
+			count = dynamic_lights_baked_add(count, &marker.matrix.position, &marker.matrix.forward, intensity, &color,
+				inner, outer, object_index, ((unsigned long long)XGPU_LT_LIGHT_SOURCE_FIXTURE << 56) |
+				((unsigned long long)(attachment_index + 1) << 40) | ((unsigned long long)(unsigned long)object_index & 0xffffffffull));
+		}
+	}
+	return count;
+}
+
 static long dynamic_lights_fixtures(
 	long count)
 {
@@ -625,22 +816,14 @@ static long dynamic_lights_fixtures(
 	while ((light = (struct dynamic_lights_light_datum const *)data_iterator_next(&iterator)) != NULL)
 	{
 		char const *definition = (char const *)tag_get(DYNAMIC_LIGHTS_LIGHT_TAG, light->definition_index);
-		struct halo_dynamic_light *out;
-		short clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE];
-		short cluster_count;
-		struct location location;
-		real_vector3d to;
 		real_rgb_color color;
-		float intensity, inner, outer, power[3], strongest, reach;
-		int channel;
+		float intensity, inner, outer;
 
 		if (!definition)
 			continue;
-		memcpy(&intensity, definition + DYNAMIC_LIGHTS_TAG_RADIOSITY_INTENSITY, sizeof(intensity));
-		memcpy(&color, definition + DYNAMIC_LIGHTS_TAG_RADIOSITY_COLOR, sizeof(color));
-		memcpy(&inner, definition + DYNAMIC_LIGHTS_TAG_COSINE_FALLOFF, sizeof(inner));
-		memcpy(&outer, definition + DYNAMIC_LIGHTS_TAG_COSINE_CUTOFF, sizeof(outer));
-		if (logging && intensity > 0.0f)
+		if (!dynamic_lights_baked_definition(definition, &intensity, &color, &inner, &outer))
+			continue;
+		if (logging)
 			platform_log("dynamic lights: baked light %s (%08lx, flags %x, object %08lx type %d) at %.2f %.2f %.2f "
 				"forward %.2f %.2f %.2f: radiosity %.3f x %.3f %.3f %.3f, cone %.3f %.3f, radius %.2f",
 				tag_get_name(light->definition_index), (unsigned long)iterator.datum_index, (unsigned)light->flags,
@@ -651,62 +834,13 @@ static long dynamic_lights_fixtures(
 				(double)color.red, (double)color.green, (double)color.blue, (double)inner, (double)outer,
 				(double)light->radius);
 		/* (one the game draws: the game's light already) */
-		if (TEST_FLAG(light->flags, 0) || !(intensity > 0.0f) || !(intensity < 1.0e6f) ||
-			light->parent_light_index != NONE)
+		if (TEST_FLAG(light->flags, 0) || light->parent_light_index != NONE)
 			continue;
-		if (count >= MAXIMUM_LIGHTS_PER_WINDOW)
-			continue;
-		power[0] = color.red * intensity * DYNAMIC_LIGHTS_BAKED_K;
-		power[1] = color.green * intensity * DYNAMIC_LIGHTS_BAKED_K;
-		power[2] = color.blue * intensity * DYNAMIC_LIGHTS_BAKED_K;
-		strongest = MAX(power[0], MAX(power[1], power[2]));
-		if (!(strongest > 0.0f))
-			continue;
-		reach = sqrtf(strongest / DYNAMIC_LIGHTS_BAKED_LEAST);
-		reach = reach < DYNAMIC_LIGHTS_BAKED_REACH_LEAST ? DYNAMIC_LIGHTS_BAKED_REACH_LEAST :
-			reach > DYNAMIC_LIGHTS_BAKED_REACH_MOST ? DYNAMIC_LIGHTS_BAKED_REACH_MOST : reach;
-		vector_from_points3d(&render.camera.position, &light->position, &to);
-		if (magnitude3d(&to) - reach > DYNAMIC_LIGHTS_BAKED_RANGE)
-			continue;
-		scenario_location_from_point(&location, &light->position);
-		if (location.cluster_index == NONE)
-			continue;
-		cluster_count = door_portals_clusters_in_sphere(location.cluster_index, &light->position, reach,
-			MAXIMUM_CLUSTERS_PER_STRUCTURE, clusters);
-		out = &dynamic_lights.lights[count];
-		out->position[0] = light->position.x;
-		out->position[1] = light->position.y;
-		out->position[2] = light->position.z;
-		out->radius = reach;
-		/* (lt_lights.c takes the colour to linear and by the spot's k) */
-		for (channel = 0; channel < 3; channel++)
-			out->color[channel] = powf(power[channel] / DYNAMIC_LIGHTS_BAKED_SPOT_K, 1.0f / 2.2f);
-		out->axis[0] = light->forward.i;
-		out->axis[1] = light->forward.j;
-		out->axis[2] = light->forward.k;
-		/* (its cone as an own light's: scale (cos - outer), offset -scale
-		outer. One with no cone, a point, is left out: the pass's k for a
-		point follows its reach (lt_point_power_scale), not the bake's
-		units; a50's all have cones) */
-		if (!(outer > -1.0f && outer < 1.0f))
-			continue;
-		if (!(inner > outer + 0.001f) || inner > 1.0f)
-			inner = MIN(outer + 0.001f, 1.0f);
-		out->cone_scale = 1.0f / (inner - outer);
-		out->cone_offset = -out->cone_scale * outer;
-		out->flags = 0;
-		dynamic_lights.owners[count] = 0;
-		dynamic_lights.objects[count] = light->object_index;
-		dynamic_lights.keys[count] = ((unsigned long long)XGPU_LT_LIGHT_SOURCE_FIXTURE << 56) |
-			((unsigned long long)(unsigned long)iterator.datum_index & 0xffffffffull);
-		dynamic_lights.baked[count] = FALSE;
-		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
-		/* (its object's lamps none: this spot is its light) */
-		if (light->object_index != NONE && dynamic_lights_baked_object_count < DYNAMIC_LIGHTS_BAKED_OBJECTS)
-			dynamic_lights_baked_objects[dynamic_lights_baked_object_count++] = light->object_index;
-		count++;
+		count = dynamic_lights_baked_add(count, &light->position, &light->forward, intensity, &color, inner, outer,
+			light->object_index, ((unsigned long long)XGPU_LT_LIGHT_SOURCE_FIXTURE << 56) |
+			((unsigned long long)(unsigned long)iterator.datum_index & 0xffffffffull));
 	}
-	return count;
+	return dynamic_lights_datumless(count);
 }
 
 static void dynamic_lights_shadowed(long count);
