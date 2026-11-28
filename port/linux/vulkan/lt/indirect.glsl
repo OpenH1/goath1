@@ -201,8 +201,9 @@ float flashlight_estimate(vec3 p, vec3 n)
 // the dynamic direct light at a hit: one of its cell's lights (and the flashlight) chosen by its unshadowed light,
 // one shadow ray to it, over its chance. A light whose emitter the ray has met is left out: the hit within its
 // emitter's body (lt/e1.frag's emitter_body: the reach its shadow rays stop short of, a needle stuck in a rock's
-// glow), or on its emitter's object (the light table's texel 5.w: a projectile's light's projectile, the plasma
-// bolt that is the glow, bigger than the radius the tags give no size for). The direct light's
+// glow), or on the instance it leaves unlit (the light table's texel 5.w: a projectile's light's projectile, the
+// plasma bolt that is the glow, bigger than the radius the tags give no size for; the owner of one whose tag says
+// "don't light own object", as lt/e1.frag's light_sample has it). The direct light's
 // next-event sample already counts that light at the ray's origin, so lighting the emitter's own surface again here
 // is the light counted twice, at the emitter's whole exitance (hundreds of times the scene's light, met by one ray
 // in thousands: the held frames' fireflies). Every other light lights the hit, a carrier's model too: an Elite's
