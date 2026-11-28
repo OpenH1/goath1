@@ -1,9 +1,0 @@
-<!-- A fixture for tools/harness/tests/test_menu_dialog_live.py, not one of the game's screens: a pop-up whose words
-and one choice read a binding, filled again each frame (docs/menu_screens.md, <dialog>). -->
-<screen name="dialog_live" back="close">
-	<dialog title="KEEP THESE SETTINGS?" text="Reverting in {test.left} seconds"/>
-	<list focus="revert">
-		<item id="keep" label="KEEP" do="close"/>
-		<item id="revert" label="REVERT ({test.left})" do="close"/>
-	</list>
-</screen>
