@@ -2,7 +2,7 @@
 """The ray-traced lighting's point lights against the classic look: one command that measures each kind of point light
 the pass draws (muzzle flashes, explosions, projectiles, the port's own lights) against what the setting-off look
 adds there, on held frames of the recordings, and prints the k each one needs beside the k the build gives it
-(lt_lights.c's lt_point_power_scale).
+(lt_lights.c's lt_point_power_scale: the classic's light matched at half the reach).
 
     python3 tools/rt2_effect_k.py --build local/my-branch                  measure, the table printed
     python3 tools/rt2_effect_k.py --build local/my-branch --json out.json  the results written there too
@@ -66,6 +66,10 @@ RECORDINGS = {
                   "b30's beach firefight (rt2/fixes' b30_fight): plasma bolts, needles, a grenade by a Warthog"),
 }
 
+def say(*words):
+    print(*words, file=sys.stderr, flush=True)
+
+
 # ---------- the rule (lt_lights.c's lt_point_power_scale, operation for operation)
 
 def window(x):
@@ -78,7 +82,7 @@ def classic_core(r):
 
 
 def point_k(r, emitter):
-    """the classic's flux over the reach over the pass's at k = 1"""
+    """(the other rule tried: the classic's flux over the reach over the pass's at k = 1)"""
     if r <= 0:
         return 0.0
     core, r2, classic, passed = classic_core(r), emitter * emitter, 0.0, 0.0
@@ -91,7 +95,7 @@ def point_k(r, emitter):
 
 
 def mid_k(r, emitter):
-    """the k that matches the classic at half the reach (the other measure the brief names)"""
+    """the build's rule (lt_lights.c's lt_point_power_scale): the classic matched at half the reach"""
     d = r / 2
     return BRIGHTNESS * max(d * d, emitter * emitter) / (1 + classic_core(r) * d * d)
 
@@ -305,7 +309,7 @@ def remote_main(args):
         base = np.asarray(lum, dtype=np.float64).reshape(h, w)
         if base.shape != classic.shape:
             base = np.zeros_like(classic)
-        k_build = point_k(r, emitter)
+        k_build = mid_k(r, emitter)
 
         def k_over(mask):
             c, p = float(classic[mask].sum()), float(p_open[mask].sum())

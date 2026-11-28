@@ -31,8 +31,8 @@ truth export's lights.json, so the two agree at a tick):
   the port's brightening past 1), taken to linear (^2.2), times k
   (lt_power_scale: the flashlight's measured, ~/dev/rt2-calibration.json's
   flashlight_power_scale, which a lamp and a panel share; a point light's
-  from its reach and emitter, the classic light model's own light over the
-  reach, lt_point_power_scale and dynamic_power_scales). The gel is the
+  from its reach and emitter, the classic light model's own light at half
+  the reach, lt_point_power_scale and dynamic_power_scales). The gel is the
   angular profile alone (pow(color * gel, 2.2) = pow(color, 2.2) x
   pow(gel, 2.2)).
 - range: the reach as drawn (the tag's radius by its modifier), the range
@@ -108,7 +108,6 @@ its reach, and one k a kind cannot match it at every reach
 #define LT_LIGHTS_CLASSIC_BRIGHTNESS 1.7f
 #define LT_LIGHTS_CLASSIC_CORE 12.0f
 #define LT_LIGHTS_CLASSIC_CORE_MOST 0.6f
-#define LT_LIGHTS_POINT_STEPS 64
 /* a sun's (a narrow sky light's) and a fill's (a sky light LT_LIGHTS_FILL_DIAMETER
 across or more, b30's 50 degree one): ~/dev/rt2-calibration.json's
 sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
@@ -369,30 +368,24 @@ static int lt_suns(int count)
 	return count;
 }
 
-/* a point light's k: the classic's light over the reach (its flux through
-the spheres about it, the light the surfaces about it get) over the pass's
-at k = 1 (W(d / r) / max(d^2, emitter radius^2)), the same total light, the
-pass's falling off physically within it; xgpu_vulkan_lt.c's the same */
+/* a point light's k: the classic's light at half its reach over the
+pass's there at k = 1, BRIGHTNESS max(d^2, emitter^2) / (1 + core d^2) at
+d = r / 2 (both have the same range window): so it adds what the classic
+adds where most of what it lights is seen; tools/rt2_effect_k.py measured
+the light each kind adds over its held frames' pixels against the classic's
+(~/dev/rt2-calibration.json's dynamic_power_scales: the need over this k
+0.57 to 1.2, about 1 on average; the classic's whole flux over the reach
+was 0.8 to 1.6) */
 static float lt_point_power_scale(float range, float emitter_radius)
 {
-	float core = LT_LIGHTS_CLASSIC_CORE / (range * range), classic = 0.0f, pass = 0.0f;
+	float core = LT_LIGHTS_CLASSIC_CORE / (range * range);
 	float least = 1.0f / (LT_LIGHTS_CLASSIC_CORE_MOST * LT_LIGHTS_CLASSIC_CORE_MOST);
-	float r2 = emitter_radius * emitter_radius;
-	int step;
+	float d2 = 0.25f * range * range, r2 = emitter_radius * emitter_radius;
 
 	if (!(range > 0.0f))
 		return 0.0f;
 	core = core > least ? core : least;
-	for (step = 0; step < LT_LIGHTS_POINT_STEPS; step++)
-	{
-		float x = ((float)step + 0.5f) / (float)LT_LIGHTS_POINT_STEPS, d = x * range, d2 = d * d;
-		float window = 1.0f - x * x * x * x;
-
-		window *= window;
-		classic += window * d2 / (1.0f + core * d2);
-		pass += window * d2 / (d2 > r2 ? d2 : r2);
-	}
-	return pass > 0.0f ? LT_LIGHTS_CLASSIC_BRIGHTNESS * classic / pass : 0.0f;
+	return LT_LIGHTS_CLASSIC_BRIGHTNESS * (d2 > r2 ? d2 : r2) / (1.0f + core * d2);
 }
 
 /* a light's k by its kind: a point's from its reach (lt_point_power_scale),
