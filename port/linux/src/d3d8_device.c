@@ -452,6 +452,12 @@ struct draw_inputs
 	they were told with, taken as each draw is made (material_modes_told);
 	as a record plays, the recorded draw's */
 	uint32_t material_modes;
+	/* display.rt_reflections (and the ray-traced lighting's reflections):
+	the reflection the draw's code tags it with (halo_rt_reflection:
+	HALO_RT_REFLECTION_*, 0 none), whatever the setting; the key's bits made
+	of it as the setting is now (rt_reflection_modes), so that a record made
+	with it off makes the traced variants as it plays with it on */
+	uint32_t rt_reflection;
 	/* the region of its texture each stage samples, as a texture of its own
 	with its border beyond it (d3d8_texture_region: its size and origin, in
 	the texture's coordinates; size 0: the whole texture) */
@@ -556,7 +562,8 @@ void halo_hdr_draw_kind(int kind)
 
 The game's rasterizer tags the draws whose texture 3 is a reflection's
 cube map (halo_rt_reflection); where the setting is on and the backend has
-ray queries, the tag goes into the pixel key (rt_reflection_modes), and the
+ray queries, the tag (a draw input, draw_inputs' rt_reflection, journaled
+whatever the setting) goes into the pixel key (rt_reflection_modes), and the
 backend traces that texel through the ray-traced scene. The scene itself is
 the game's (port/linux/game/rt_reflections.c). */
 static struct
@@ -564,11 +571,6 @@ static struct
 	int read;
 	unsigned long read_at;
 	int on;
-	/* the class the draws from now on trace as (xgpu.h's
-	XGPU_RT_REFLECTION_*), 0 none: not a draw's input, which the records
-	keep in their form (the shipped records stay as they are); a record's
-	draw has none (rt_reflection_modes) */
-	uint32_t tag;
 } rt_reflections;
 
 unsigned long halo_gpu_settings_taken(void);
@@ -594,8 +596,16 @@ static int rt_reflections_wanted(void)
 
 void halo_rt_reflection(int reflection)
 {
-	rt_reflections.tag = reflection > 0 && reflection <= HALO_RT_REFLECTION_WATER && rt_reflections_wanted() ?
-		(uint32_t)reflection : 0;
+	/* (the draw's input whatever the setting: draw_inputs' rt_reflection) */
+	inputs.rt_reflection = reflection > 0 && reflection <= HALO_RT_REFLECTION_WATER ? (uint32_t)reflection : 0;
+}
+
+/* the class the draw traces its reflection as (xgpu.h's
+XGPU_RT_REFLECTION_*), 0 none: its tag (a record's draw's as it plays), where
+the setting is on now */
+static uint32_t rt_reflection_tag(void)
+{
+	return inputs.rt_reflection && rt_reflections_wanted() ? inputs.rt_reflection : 0;
 }
 
 /* the reflection's bits of a draw's pixel key: its tag, where texture 3 is
@@ -604,7 +614,7 @@ _DOT_RFLCT_SPEC, _DOT_RFLCT_SPEC_CONST) */
 static DWORD rt_reflection_modes(DWORD texture_modes)
 {
 	DWORD stage3 = (texture_modes >> 15) & 0x1f;
-	uint32_t tag = journal_playing ? 0 : rt_reflections.tag;
+	uint32_t tag = rt_reflection_tag();
 
 	if (!tag || (stage3 != 0x03 && stage3 != 0x0c && stage3 != 0x12))
 		return 0;
@@ -7352,7 +7362,7 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	RETAINED_TAKE(material_normal, (uint32_t)number);
 	number = material_modes() ? material.orm : 0;
 	RETAINED_TAKE(material_orm, (uint32_t)number);
-	number = journal_playing ? 0 : (long)rt_reflections.tag;
+	number = (long)rt_reflection_tag();
 	RETAINED_TAKE(rt_reflection, (uint32_t)number);
 	number = hdr.mode;
 	RETAINED_TAKE(hdr_mode, number);
@@ -10504,6 +10514,7 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	inputs.hdr_kind = 0;
 	/* (display.soft_particles: a group cut short leaves the next frame hard) */
 	inputs.soft_group = FALSE;
+	inputs.rt_reflection = 0;
 	if (debug_settings.statistics && device.frame % 60 == 0)
 	{
 		platform_log("frame %lu: %lu draws, %lu immediate, %lu clears, %lu target changes; skipped %lu no program, %lu no target, %lu link; "
@@ -11507,8 +11518,9 @@ group, the stages' texture regions and the high-res text's atlas as itself;
 JOURNAL_VIEW_SCREEN; 12: the front end's inputs whole, struct draw_inputs;
 13: a stream's memory by its geometry's name and offset, #1169; 14: the
 objects' span for display.temporal_aa, draw_inputs' motion_objects; 15: a model's material maps' bits,
-draw_inputs' material_modes) */
-#define JOURNAL_FORM 15
+draw_inputs' material_modes; 16: a draw's ray-traced reflection's tag,
+draw_inputs' rt_reflection) */
+#define JOURNAL_FORM 16
 
 unsigned int halo_gpu_journal_form(void)
 {
