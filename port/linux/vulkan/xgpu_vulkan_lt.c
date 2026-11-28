@@ -68,19 +68,16 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 c20 corner's wall at about 3 m shows as bright as the original's gamma add, falling off physically from there
 (~/dev/rt2-calibration.json's flashlight_power_scale and its derivation, with the physical falloff of lt/e1.frag; the truth renderer uses the same) */
 #define LT_POWER_SCALE 1.009f
-/* the other kinds' (~/dev/rt2-calibration.json's dynamic_power_scales): a
-point light's on an object (a muzzle flash), on none (an explosion) */
-#define LT_OBJECT_POWER_SCALE 0.845f
-/* a projectile's light (a plasma bolt's, a needle's: lt_lights.c flags them),
-measured apart (dynamic_power_scales.point_projectile) */
-#define LT_PROJECTILE_POWER_SCALE 0.41f
-/* one of the port's own lights on a projectile (light_sources.c: a
-needle's, in flight or stuck; a mortar shell's, a rocket's exhaust, a
-Sentinel's beam, which the record cannot tell from a needle's), measured
-on needles apart (~/dev/rt2-calibration.json's
-dynamic_power_scales.point_own_projectile) */
-#define LT_OWN_PROJECTILE_POWER_SCALE 0.45f
-#define LT_EFFECT_POWER_SCALE 7.85f
+/* a point light's k (lt_lights.c's lt_point_power_scale, the same rule:
+~/dev/rt2-calibration.json's dynamic_power_scales): the classic light
+model's own light over the reach (BRIGHTNESS x color^2.2 x W(d / r) /
+(1 + core d^2), core = max(CORE / r^2, 1 / CORE_MOST^2)) over the pass's
+at k = 1, so each light adds what the classic adds about it, whatever its
+reach (a muzzle flash, an explosion, a bolt, the port's own lights) */
+#define LT_CLASSIC_BRIGHTNESS 1.7f
+#define LT_CLASSIC_CORE 12.0f
+#define LT_CLASSIC_CORE_MOST 0.6f
+#define LT_POINT_STEPS 64
 /* the lamp moved this far in a frame (world units): a jump, the count started again */
 #define LT_JUMP 0.25f
 /* where the parameters start in the draw set's uniforms (lt/e1.frag's) */
@@ -597,28 +594,39 @@ static const struct xgpu_stream_lt_light *lt_record(const struct xgpu_stream_lt_
 	return NULL;
 }
 
-/* a light's k by its kind (lt_lights.c's lt_power_scale, the same rule:
-~/dev/rt2-calibration.json): the flashlight's, a point's on an object (a
-muzzle flash, a bolt) or on none (an explosion), the rest the flashlight's */
+/* a point light's k from its reach and emitter radius (lt_lights.c's
+lt_point_power_scale, operation for operation): the classic's light's flux
+through the spheres about it over the pass's at k = 1 */
+static float lt_point_k(float range, float emitter_radius)
+{
+	float core = LT_CLASSIC_CORE / (range * range), classic = 0.0f, pass = 0.0f;
+	float least = 1.0f / (LT_CLASSIC_CORE_MOST * LT_CLASSIC_CORE_MOST);
+	float r2 = emitter_radius * emitter_radius;
+	int step;
+
+	if (!(range > 0.0f))
+		return 0.0f;
+	core = core > least ? core : least;
+	for (step = 0; step < LT_POINT_STEPS; step++)
+	{
+		float x = ((float)step + 0.5f) / (float)LT_POINT_STEPS, d = x * range, d2 = d * d;
+		float window = 1.0f - x * x * x * x;
+
+		window *= window;
+		classic += window * d2 / (1.0f + core * d2);
+		pass += window * d2 / (d2 > r2 ? d2 : r2);
+	}
+	return pass > 0.0f ? LT_CLASSIC_BRIGHTNESS * classic / pass : 0.0f;
+}
+
+/* a light's k by its kind (lt_lights.c's lt_power_scale, the same rule): a
+point's from its reach (a recording made before carries its kind's old k,
+taken off by the record's power_scale), the rest the flashlight's */
 static float lt_kind_k(const struct xgpu_stream_lt_light *light)
 {
-	unsigned int source = light->id[1] >> 24;
-
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_POWER_SCALE;
-	/* (a projectile's; and one of the port's own effect flashes
-(light_sources.c's key kind 1: a needle bursting, a shot's flash), lights
-of a projectile's reach (1 to 1.5 world units), not an explosion's (10),
-whose k is for its reach: the projectile's) */
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) && source >= 1 && source <= 3)
-		return LT_OWN_PROJECTILE_POWER_SCALE;
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || source == 1)
-		return LT_PROJECTILE_POWER_SCALE;
-	/* (one of the port's own lights on an object or a firer's flames
-	(light_sources.c's key kinds 2 and 3): on an object, though a record
-	made before lt_lights.c named its object has none) */
-	return light->object != 0xffffffffu || source == 2 || source == 3 ? LT_OBJECT_POWER_SCALE :
-		LT_EFFECT_POWER_SCALE;
+	return lt_point_k(light->range, light->emitter_radius);
 }
 
 /* a record's power as the pass uses it: its kind's k (a recording made

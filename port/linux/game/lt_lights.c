@@ -29,10 +29,10 @@ truth export's lights.json, so the two agree at a tick):
   projectile 0.05, others 5% of the reach, 0.1 to 0.5).
 - power: the color as the enhanced lights draw it (the rasterizer's, times
   the port's brightening past 1), taken to linear (^2.2), times k
-  (lt_power_scale: ~/dev/rt2-calibration.json's flashlight_power_scale and
-  dynamic_power_scales, a k a kind; LT_LIGHTS_POWER_SCALE the flashlight's,
-  measured for the flashlight alone; the others' k to be measured each once,
-  the same way: see the report and lt_lights_power_scale). The gel is the
+  (lt_power_scale: the flashlight's measured, ~/dev/rt2-calibration.json's
+  flashlight_power_scale, which a lamp and a panel share; a point light's
+  from its reach and emitter, the classic light model's own light over the
+  reach, lt_point_power_scale and dynamic_power_scales). The gel is the
   angular profile alone (pow(color * gel, 2.2) = pow(color, 2.2) x
   pow(gel, 2.2)).
 - range: the reach as drawn (the tag's radius by its modifier), the range
@@ -97,21 +97,18 @@ extern struct data_array *light_data;
 /* k: the flashlight's, measured (~/dev/rt2-calibration.json); the suns' the
 truth helper's fit of the lightmap's direct share (sun_power_scale) */
 #define LT_LIGHTS_POWER_SCALE 1.009f
-/* the other kinds' k, each measured once the flashlight's way
-(~/dev/rt2-calibration.json's dynamic_power_scales and their derivation):
-a point light on an object (a muzzle flash, a bolt), a point light on none
-(an effect's: an explosion); a spot that is no flashlight (a lamp) and a
-panel not measured (none staged): the flashlight's. The backend's light
-transport applies the same rule (xgpu_vulkan_lt.c's lt_kind_k). */
-#define LT_LIGHTS_OBJECT_POWER_SCALE 0.845f
-/* a projectile's (a plasma bolt's, a needle's): measured apart, the same
-way (~/dev/rt2-calibration.json's dynamic_power_scales.point_projectile) */
-#define LT_LIGHTS_PROJECTILE_POWER_SCALE 0.41f
-/* one of the port's own lights on a projectile (light_sources.c's: a
-needle's in flight or stuck): measured on needles apart
-(dynamic_power_scales.point_own_projectile; xgpu_vulkan_lt.c's the same) */
-#define LT_LIGHTS_OWN_PROJECTILE_POWER_SCALE 0.45f
-#define LT_LIGHTS_EFFECT_POWER_SCALE 7.85f
+/* a point light's k (a muzzle flash, an explosion, a projectile's light,
+the port's own lights: lt_point_power_scale) from the classic light model's
+own falloff (display.ray_traced_lighting off: d3d8_device.c's look[0],
+xgpu_spirv.c's dynamic_light_sum_classic): the linear light it adds at d is
+BRIGHTNESS x color^2.2 x W(d / r) / (1 + core d^2), core = max(CORE / r^2,
+1 / CORE_MOST^2), W the range window; so the classic's light scales with
+its reach, and one k a kind cannot match it at every reach
+(~/dev/rt2-calibration.json's dynamic_power_scales) */
+#define LT_LIGHTS_CLASSIC_BRIGHTNESS 1.7f
+#define LT_LIGHTS_CLASSIC_CORE 12.0f
+#define LT_LIGHTS_CLASSIC_CORE_MOST 0.6f
+#define LT_LIGHTS_POINT_STEPS 64
 /* a sun's (a narrow sky light's) and a fill's (a sky light LT_LIGHTS_FILL_DIAMETER
 across or more, b30's 50 degree one): ~/dev/rt2-calibration.json's
 sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
@@ -372,19 +369,39 @@ static int lt_suns(int count)
 	return count;
 }
 
-/* a light's k by its kind: the flashlight's, a point's on an object or on
-none, the rest the flashlight's */
+/* a point light's k: the classic's light over the reach (its flux through
+the spheres about it, the light the surfaces about it get) over the pass's
+at k = 1 (W(d / r) / max(d^2, emitter radius^2)), the same total light, the
+pass's falling off physically within it; xgpu_vulkan_lt.c's the same */
+static float lt_point_power_scale(float range, float emitter_radius)
+{
+	float core = LT_LIGHTS_CLASSIC_CORE / (range * range), classic = 0.0f, pass = 0.0f;
+	float least = 1.0f / (LT_LIGHTS_CLASSIC_CORE_MOST * LT_LIGHTS_CLASSIC_CORE_MOST);
+	float r2 = emitter_radius * emitter_radius;
+	int step;
+
+	if (!(range > 0.0f))
+		return 0.0f;
+	core = core > least ? core : least;
+	for (step = 0; step < LT_LIGHTS_POINT_STEPS; step++)
+	{
+		float x = ((float)step + 0.5f) / (float)LT_LIGHTS_POINT_STEPS, d = x * range, d2 = d * d;
+		float window = 1.0f - x * x * x * x;
+
+		window *= window;
+		classic += window * d2 / (1.0f + core * d2);
+		pass += window * d2 / (d2 > r2 ? d2 : r2);
+	}
+	return pass > 0.0f ? LT_LIGHTS_CLASSIC_BRIGHTNESS * classic / pass : 0.0f;
+}
+
+/* a light's k by its kind: a point's from its reach (lt_point_power_scale),
+the rest (a flashlight, a lamp, a panel) the flashlight's */
 static float lt_power_scale(struct xgpu_stream_lt_light const *light)
 {
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_LIGHTS_POWER_SCALE;
-	/* (and one of the port's own effect flashes, light_sources.c's key
-kind 1: a projectile's reach, not an explosion's) */
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) && (light->id[1] >> 24) >= 1 && (light->id[1] >> 24) <= 3)
-		return LT_LIGHTS_OWN_PROJECTILE_POWER_SCALE;
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || (light->id[1] >> 24) == 1)
-		return LT_LIGHTS_PROJECTILE_POWER_SCALE;
-	return light->object != 0xffffffffu ? LT_LIGHTS_OBJECT_POWER_SCALE : LT_LIGHTS_EFFECT_POWER_SCALE;
+	return lt_point_power_scale(light->range, light->emitter_radius);
 }
 
 /* the rasterizer light a copy (key) is of: its index, or NONE */
