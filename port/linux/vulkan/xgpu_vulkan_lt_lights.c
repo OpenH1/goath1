@@ -111,6 +111,8 @@ void xgpu_vulkan_lt_lights_take(const struct xgpu_stream_lt_light *lights, uint3
 	if (!lt_lights.on)
 		host_logf(HOST_LOG_INFO, "vulkan: the light-transport pass turned on (the game's light lists)");
 	lt_lights.on = 1;
+	/* (window -2: on, its lists to come, said as a map is prepared so that
+	its shaders are the pass's variant: lt_lights.c's lt_lights_announce) */
 	if (window < 0 || window > 3 || record->count > XGPU_STREAM_LT_LIGHTS_MAXIMUM || (record->count && !lights))
 		return;
 	{

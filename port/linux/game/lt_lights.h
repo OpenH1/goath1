@@ -186,7 +186,10 @@ records of lights (at most maximum in all): the count of all */
 int lt_emitters_live(void);
 int lt_emitters_fitted(void);
 int lt_emitters_append(struct xgpu_stream_lt_light *lights, int count, int maximum);
-/* each frame: the backend told when the pass is turned off */
+/* the backend told when the pass is turned on or off: each frame, and as a
+map's pipelines are prepared (d3d8_device.c's halo_gpu_prepare), so that
+the light-transport variant of the shaders is the one prepared before the
+first light list comes */
 void lt_lights_update(void);
 
 #endif

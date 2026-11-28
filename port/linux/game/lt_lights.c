@@ -235,15 +235,19 @@ static int lt_lights_wanted(void)
 	return lt.wanted ? lt.wanted == 3 : lt_lights_pass_on();
 }
 
-/* the backend told when the pass is turned off (a list with window -1:
-xgpu_vulkan_lt_lights.c), once, after lists were sent */
+/* the backend told when the pass is turned on (a list with window -2, before
+the first list) or off (window -1: xgpu_vulkan_lt_lights.c), once as it
+changes */
 static void lt_lights_announce(int sending)
 {
 	static int sent = 0;
 
 	if (sending && !sent)
+	{
 		platform_log("lt lights: the light list sent each frame%s%s (the light-transport pass on)",
 			lt.dump_path[0] ? ", dumped to " : "", lt.dump_path);
+		xgpu_backend_lt_lights(NULL, 0, -2, lt.frame);
+	}
 	if (!sending && sent)
 	{
 		platform_log("lt lights: the light-transport pass off");

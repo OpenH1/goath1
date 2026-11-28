@@ -576,6 +576,7 @@ unsigned long halo_gpu_settings_taken(void);
 static BOOL journal_playing;
 
 int lt_lights_pass_on(void); /* port/linux/game/lt_lights.h */
+void lt_lights_update(void);
 
 static int rt_reflections_wanted(void)
 {
@@ -7947,6 +7948,9 @@ void halo_gpu_prepare(int new_map)
 	the backend's flag cleared as it begins: world_ao_key) */
 	world_ao.preparing = TRUE;
 	world_ao.twins = FALSE;
+	/* (the backend told whether the light-transport pass is on before it
+	prepares: its shaders' variant, as play draws them) */
+	lt_lights_update();
 	if (device.gl_ready)
 	{
 		xgpu_backend_prepare();
