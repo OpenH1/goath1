@@ -999,6 +999,8 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		if (!mask || !mask_width || !mask_height)
 			continue;
 		base = world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_BASE], &base_width, &base_height);
+		if (getenv("HALO_WORLD_RT_LAMPS_DECODE_ONLY"))
+			continue;
 		for (channel = 0; channel < 3; channel++)
 			colour[channel] = (float)((material->self_illumination >> (8 * channel)) & 0xFF) / 255.0f;
 		for (i = 0; i < 3; i++)
