@@ -420,9 +420,13 @@ from what the tick left (scripted_camera_time_drawn) */
 void scripted_camera_tick(
 	void)
 {
+	/* (nor what the frames count down from, which go on as if the skipped
+	ticks had not run) */
+	if (main_skipping_ticks())
+		return;
 	camera_script_drawn_timer = camera_script_globals.timer;
 	camera_script_drawn_held = FALSE;
-	if (director_scripted_camera_running() && !main_skipping_ticks())
+	if (director_scripted_camera_running())
 	{
 		camera_script_globals.timer = MAX(
 			0.f,
