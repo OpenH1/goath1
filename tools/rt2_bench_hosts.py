@@ -30,11 +30,12 @@ rigs), else recorded (into a part folder renamed when done; a second helper reco
 first). Afterwards the host's shared recordings are collected to its budget (MIN_FREE_GB, MAX_SHARED_GB): the least
 recently used first, never one used in the last hour.
 
---host auto (run, view, reference, terms, triage's default): each eligible host probed at once (one ssh each): the
+--host auto (verify, run, view, reference, terms, triage's default): each host probed at once (one ssh each): the
 5900X only when its owner is not playing (checked again before every replay: rt2_bench.owner_check), bosgame only
-with no game in the VM; its replays now (halo_replay processes), its GPU's load and whether a measuring run holds the
-GPU lock alone; whether it has the build and the recording. The host with the lowest load score below its cap
-(CAPS) is taken, preferring those that have the recording (a copy or a recording costs more than a busy GPU).
+with no game in the VM; its replays now (drawing or queued for goat-rig's 3 picture slots), a measuring run's lock,
+whether it has the build and the recording. The host taken is the one where the command should end soonest
+(score(): an exact try's time alone on that GPU times the replays sharing it plus one, times the command's work,
+plus a copy or a build first): a GPU's throughput does not grow with replays at once, so a busy host's try waits.
 """
 
 from __future__ import annotations

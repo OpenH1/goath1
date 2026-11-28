@@ -944,7 +944,7 @@ class Cache:
                 paths[key] = value
         job = {"folders": list(folders), "replay": replay_path(args.host, args.build), "paths": paths}
         started = time.monotonic()
-        found = json.loads(ssh(args.host, f"python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{FINGERPRINT}\nPY\n")
+        found = json.loads(ssh(args.host, f"MSYS2_ARG_CONV_EXCL='*' python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{FINGERPRINT}\nPY\n")
                            .strip().splitlines()[-1])
         self.seconds = time.monotonic() - started
         for folder in folders:
