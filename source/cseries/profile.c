@@ -1348,10 +1348,15 @@ void profile_enter_private(
 
 	find_profile_section(section);
 
-	match_assert(
-		"c:\\halo\\SOURCE\\cseries\\profile.c",
-		597,
-		section->stack_depth==NONE);
+	/* port: entered again while open (its own update reached from inside it):
+	the outer call times it all, this one is counted only. The original
+	asserted it never happens, as at 30 it does not */
+	if (section->stack_depth!=NONE)
+	{
+		section->nesting_depth++;
+		section->frame_call_count++;
+		return;
+	}
 
 	profile_globals.stack_depth++;
 	section->stack_depth = profile_globals.stack_depth;
@@ -1369,6 +1374,13 @@ void profile_exit_private(
 	struct profile_section *section)
 {
 	__int64 timebase;
+
+	/* port: the exit of a call made while it was open (profile_enter_private) */
+	if (section->nesting_depth>0)
+	{
+		section->nesting_depth--;
+		return;
+	}
 
 	if (!profile_globals.initialization_pending)
 	{
@@ -1403,6 +1415,7 @@ void profile_port_sections_closed(
 	for (index = 0; index<profile_globals.section_count; index++)
 	{
 		profile_globals.sections[index]->stack_depth = NONE;
+		profile_globals.sections[index]->nesting_depth = 0;
 	}
 	profile_globals.stack_depth = 0;
 
@@ -1938,6 +1951,7 @@ void find_profile_section(
 		section->recent_call_count = 0;
 		section->recent_elapsed_timebase = 0;
 		section->stack_depth = NONE;
+		section->nesting_depth = 0;
 		section->sample_count = 0;
 		section->frame_elapsed_timebase = 0;
 		section->frame_call_count = 0;

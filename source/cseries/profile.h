@@ -66,7 +66,11 @@ struct profile_section
 	long section_index;
 	boolean active;
 	short stack_depth;
-	long field_C;
+	/* port: (the original's field_C, unused) how many times the section was
+	entered again while open, its own update reached from inside it (a
+	grenade let go of in a projectile's update steps at once in a sub-step,
+	projectiles.c): timed once, as the outermost call, each call counted */
+	long nesting_depth;
 	unsigned __int64 entry_timebase;
 	long recent_call_count;
 	byte reserved1C[4];
