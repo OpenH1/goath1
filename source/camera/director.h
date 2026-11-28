@@ -165,6 +165,10 @@ where the camera looks (network_coop.c), the first observer, as its first
 local player's would be */
 boolean director_unattended_scripted_camera(
 	short local_player_index);
+/* port: whether director_update moves the scripts' camera (its first local
+player's, or a dedicated server's: director_unattended_scripted_camera) */
+boolean director_scripted_camera_running(
+	void);
 
 /* ---------- globals */
 

@@ -170,6 +170,21 @@ static struct scripted_camera_globals camera_script_globals =
 	0
 };
 
+/* port: the scripted camera's time left as the scripts' last tick left it,
+which the frames since count down from by their part of the next tick
+(scripted_camera_tick, scripted_camera_time_drawn); held as it is until the
+tick ends after a script set it in a tick still open (game.sim_rate's
+sub-steps) */
+static real camera_script_drawn_timer;
+static boolean camera_script_drawn_held;
+
+/* ---------- private prototypes */
+
+static void scripted_camera_timer_set(
+	real timer);
+static real scripted_camera_time_drawn(
+	struct camera_control const *controls);
+
 /* ---------- public code */
 
 void scripted_camera_enable(
@@ -211,8 +226,8 @@ void scripted_camera_set_animation(
 					camera_script_globals.animation_index = animation_index;
 					camera_script_globals.animation_graph_index = animation_graph_index;
 					camera_script_globals.field_of_view = 1.22173047f;
-					camera_script_globals.timer =
-						(real)(animation->frame_count / TICKS_PER_SECOND);
+					scripted_camera_timer_set(
+						(real)(animation->frame_count / TICKS_PER_SECOND));
 					break;
 				}
 
@@ -301,7 +316,7 @@ void scripted_camera_set(
 	else
 		camera_script_globals.field_of_view = 1.22173047f;
 	camera_script_globals.relative_object_index = relative_object_index;
-	camera_script_globals.timer = (real)camera_time;
+	scripted_camera_timer_set((real)camera_time);
 
 	director_update(0.f);
 	observer_update(0.0001f);
@@ -335,8 +350,8 @@ void scripted_camera_set_camera_point_relative(
 		camera_script_globals.field_of_view = field_of_view;
 	else
 		camera_script_globals.field_of_view = 1.22173047f;
-	camera_script_globals.timer =
-		(real)((short)transition_time / TICKS_PER_SECOND);
+	scripted_camera_timer_set(
+		(real)((short)transition_time / TICKS_PER_SECOND));
 	camera_script_globals.relative_object_index = relative_object_index;
 
 	director_update(0.f);
@@ -373,10 +388,10 @@ long scripted_camera_object_relative_to(
 	return camera_script_globals.relative_object_index;
 }
 
-/* port: the scripted camera's time left, which the frames count down as they
-move it (scripted_camera_update, by their own time) and the scripts'
-camera_time reads, for the demos (port/linux/game/demo.c's G records): a
-playback's is the recording's */
+/* port: the scripted camera's time left, which the ticks count down
+(scripted_camera_tick) and the scripts' camera_time reads, for the demos
+(port/linux/game/demo.c's G records): a playback's is the recording's (one
+recorded before the ticks counted it, as the frames counted it then) */
 void *scripted_camera_port_demo_state(
 	long *size)
 {
@@ -388,6 +403,30 @@ short scripted_camera_time(
 	void)
 {
 	return (short)(camera_script_globals.timer * 30.f);
+}
+
+/* port: the scripted camera's time counted down once a tick, at the tick's
+end (game.c), by a tick's time. The frames counted it down as they moved the
+camera (scripted_camera_update), by their own time, so the scripts' camera_time
+read a tick more or less of it at one frame rate than another, or with other
+frame timing, and a cutscene that sleeps on it (a30's opening) went on a tick
+apart (#1236). At 30, a tick a frame, the frame counted it down by a tick's
+time (1/30 s) after the tick, as this does, and only while the director moved
+the scripts' camera (director_scripted_camera_running), as this does: the
+scripts read what they read there. The camera itself is moved by the frames,
+from what the tick left (scripted_camera_time_drawn) */
+void scripted_camera_tick(
+	void)
+{
+	camera_script_drawn_timer = camera_script_globals.timer;
+	camera_script_drawn_held = FALSE;
+	if (director_scripted_camera_running())
+	{
+		camera_script_globals.timer = MAX(
+			0.f,
+			camera_script_globals.timer - 1.f / (real)TICKS_PER_SECOND);
+	}
+	return;
 }
 
 void scripted_camera_update(
@@ -428,7 +467,7 @@ void scripted_camera_update(
 		}
 
 		result->timer = speed != 0.f
-			? camera_script_globals.timer / speed
+			? scripted_camera_time_drawn(controls) / speed
 			: 0.f;
 		result->field_of_view = camera_script_globals.field_of_view;
 		result->forward = camera_script_globals.forward;
@@ -489,7 +528,7 @@ void scripted_camera_update(
 				camera_script_globals.animation_index,
 				struct animation);
 			frame_count = animation->frame_count;
-			frame = (short)(frame_count - camera_script_globals.timer * 30.f);
+			frame = (short)(frame_count - scripted_camera_time_drawn(controls) * 30.f);
 			animation_get_root_matrix(
 				NULL,
 				animation,
@@ -533,9 +572,7 @@ void scripted_camera_update(
 		break;
 	}
 
-	camera_script_globals.timer = MAX(
-		0.f,
-		camera_script_globals.timer - speed * controls->seconds_elapsed);
+	/* port: (the time left counted down by the ticks instead: scripted_camera_tick) */
 	camera_script_globals.first_update = FALSE;
 
 	match_vassert(
@@ -580,3 +617,30 @@ void scripted_camera_update(
 }
 
 /* ---------- private code */
+
+/* port: the time left, set by a script (or the co-op netcode): the frames
+until the tick ends hold it, as the frame after the tick that set it did */
+static void scripted_camera_timer_set(
+	real timer)
+{
+	camera_script_globals.timer = timer;
+	camera_script_drawn_timer = timer;
+	camera_script_drawn_held = TRUE;
+	return;
+}
+
+/* port: the time left at this frame's moment, which moves the camera: as the
+last tick left it (what its scripts read), less the part of the next tick the
+clock has run since (game_time_get_tick_fraction), so that the camera moves
+smoothly through the frames between the ticks as it did when the frames
+counted the time down, and is drawn so between them (render_interpolation.c:
+render_interpolation_camera_timed). At 30, the frame after its tick, the part
+is none, and it is the time the scripts read, as there. Not in an update of
+no time (the setters' own, director_update(0)), nor while the game is paused */
+static real scripted_camera_time_drawn(
+	struct camera_control const *controls)
+{
+	if (camera_script_drawn_held || controls->seconds_elapsed <= 0.f || game_time_get_paused())
+		return camera_script_drawn_timer;
+	return MAX(0.f, camera_script_drawn_timer - game_time_get_tick_fraction() / (real)TICKS_PER_SECOND);
+}
