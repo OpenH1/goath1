@@ -385,7 +385,7 @@ vec3 dome_radiance()
 vec3 dome_at(vec3 p, vec3 n, ivec2 pixel, float salt)
 {
     vec3 d = cosine_direction(n, stratified(pixel, salt));
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    vec3 origin = p + n * ray_lift(p);
     return dome_radiance() * visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, MASK_AO);
 }
 
@@ -464,7 +464,7 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
     // the history starts again, so its first frame is near its converged one)
     bool live = real_sky();
     int rays = (pass.control.w & RESET) != 0 ? (live ? BOUNCE_LIVE_FIRST : BOUNCE_FIRST) : (live ? BOUNCE_LIVE : 1);
-    vec3 e = vec3(0.0), origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    vec3 e = vec3(0.0), origin = p + n * ray_lift(p);
     uint h = seed(pixel, 11u);
     for (int k = 0; k < rays; k++)
     {
@@ -621,7 +621,7 @@ vec3 direct_specular(vec3 p, vec3 n, vec3 normal, vec3 v, float alpha, int recei
             spec += e * ggx_lobe(normal, v, to / max(d, 1.0e-6), ggx_widened(alpha, t0.w, d)) * (total / chosen_weight);
         }
     }
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    vec3 origin = p + n * ray_lift(p);
     for (int s = 0; s < pass.lights.y; s++)
     {
         int row = SUN_ROW + s;
@@ -673,7 +673,7 @@ vec4 specular_main(ivec2 pixel)
     // against shade, flickered past the denoiser (Blood Gulch's metal walls: 2.4% temporal against 0.7% mirrored))
     bool mirror = roughness <= MIRROR_ROUGHNESS || real_sky();
     int rays = !mirror && (pass.control.w & RESET) != 0 ? BOUNCE_FIRST : 1, hits = 0;
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz)), sum = vec3(0.0);
+    vec3 origin = p + n * ray_lift(p), sum = vec3(0.0);
     float distance = 0.0;
     uint h = seed(pixel, 13u);
     for (int k = 0; k < rays; k++)
