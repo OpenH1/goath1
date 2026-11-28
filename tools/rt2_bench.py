@@ -890,8 +890,9 @@ def triage(args):
         finally:
             service.close()
 
-    def presented(name, env):
-        reply = draw_once(args.host, args.build, f"{REMOTE}/{name}", {"cmd": "rt_frames", "n": frame, "count": 1,
+    def presented(name, env, n=None):
+        reply = draw_once(args.host, args.build, f"{REMOTE}/{name}", {"cmd": "rt_frames",
+                                                                       "n": frame if n is None else n, "count": 1,
                                                                        "warm": -1, "last": 1, "inline": True,
                                                                        "compress": True,
                                                                        "regions": sum(regions, [])}, env)
@@ -905,7 +906,11 @@ def triage(args):
         classic = None
         if args.classic:
             t = time.monotonic()
-            classic = presented(args.classic, [])
+            # (the classic recording's frame at the same game second: both end at the moment's --at, 1/60 s a
+            # frame, but the setting's loading draws a different number of frames first, so counted from the end)
+            classic_frames = meta_of(args.host, f"{REMOTE}/{args.classic}")["frames"]
+            classic_frame = frame - (meta["frames"] - classic_frames)
+            classic = presented(args.classic, [], classic_frame)
             game = presented(name_of(args), list(args.set))
             seconds["classic"] = time.monotonic() - t
         white = args.scale or 0.05
@@ -935,14 +940,19 @@ def triage(args):
                  f"(gradients cut {d['share']['gradient_cut'] * 100:.0f}% of pixels, the sample's test "
                  f"{d['share']['sample_cut'] * 100:.0f}%, disoccluded {d['share']['disoccluded'] * 100:.0f}%); "
                  f"history used {number(d['mean'].get('count'), 3)} frames"]
+        data = None
         if classic:
             c, g = classic[i]["mean"], game[i]["mean"]
             # (the presented pictures, sRGB decoded: the game's with the setting on and off; the reference's own
-            # presented picture estimated as the game's scaled by reference / realtime irradiance there)
-            lines.append(f"    DATA/LOOK (reference against classic, presented): {((g * ref / rt) / c - 1) * 100:+.1f}%"
-                         f" (the game's {(g / c - 1) * 100:+.1f}%; classic {c:.4f}, setting on {g:.4f})")
-        verdict = ("estimator" if abs(estimator) > 0.1 else "data/look" if classic and
-                   abs((g * ref / rt) / c - 1) > 0.1 else "neither beyond 10%")
+            # presented picture estimated as the game's scaled by reference / realtime irradiance there; none
+            # where either is black)
+            data = (g * ref / rt) / c - 1 if rt > 0 and c > 0 else None
+            lines.append(f"    DATA/LOOK (reference against classic, presented): "
+                         f"{'-' if data is None else f'{data * 100:+.1f}%'}"
+                         f" (the game's {'-' if c <= 0 else f'{(g / c - 1) * 100:+.1f}%'}; classic {c:.4f}, "
+                         f"setting on {g:.4f})")
+        verdict = ("estimator" if abs(estimator) > 0.1 else "data/look" if data is not None and
+                   abs(data) > 0.1 else "neither beyond 10%")
         lines.append(f"    FIRST LOOK AT: {verdict}")
         report += lines
     for line in report:
@@ -951,7 +961,9 @@ def triage(args):
     if args.json:
         (out / "triage.json").write_text(json.dumps({"frame": frame, "seconds": seconds, **result,
                                                      "denoiser": view_reply["denoiser"]["view"]["regions"],
-                                                     "classic": classic}, indent=1))
+                                                     "classic": classic, "game": game if classic else None,
+                                                     "classic_frame": classic_frame if classic else None},
+                                                    indent=1))
     return 0
 
 
