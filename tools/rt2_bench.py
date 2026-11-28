@@ -95,6 +95,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 import rt2_bench_cache  # noqa: E402
+import rt2_bench_hosts  # noqa: E402
 import rt2_clips  # noqa: E402
 import rt2_scorecard  # noqa: E402
 import vulkan_lt_shaders  # noqa: E402
@@ -102,6 +103,7 @@ import vulkan_lt_shaders  # noqa: E402
 REMOTE = "goat-rig/rt2-bench"  # (under the rig's $HOME)
 SIZE = rt2_clips.SIZE
 SHOT_EVERY = 20
+VERIFY = f"verify-{os.getpid()}"  # (verify's folder in the recording's: its own, as recordings are shared)
 WINDOWS_BUILDS = "goat-rig/builds"  # (bosgame: the replays in the VM, under its home)
 # run's default --checkpoint: the frames played whole with the new code before the measured ones. verify --change
 # HALO_LT_DENOISE_CAP=16 (a50_shields, 5900X): 8.6% of pixels off at 20, 1.7% (at most 4 of 255) at 60, then about
@@ -329,10 +331,10 @@ def verify(args):
         say(f"rt2_bench: note: recorded by {meta['build']}, replayed by {args.build}: only the same build is "
             "expected to match")
     frames = [n for n in meta["shots"] if n <= meta["frame"]][-args.pictures:]
-    ssh(args.host, f"rm -rf ~/{folder}/verify")
+    ssh(args.host, f"rm -rf ~/{folder}/{VERIFY}")
 
     def drawn(tag, n, warm):
-        out = f"{folder}/verify/{tag}"
+        out = f"{folder}/{VERIFY}/{tag}"
         started = time.monotonic()
         reply = draw_once(args.host, args.build, folder, {"cmd": "rt_frames", "n": n, "count": 1, "warm": warm,
                                                            "last": 1}, env=args.set, out=f"{out}/raw")
@@ -347,7 +349,7 @@ def verify(args):
     for n in frames:
         exact, seconds = drawn("exact", n, -1)
         say(f"rt2_bench: frame {n} drawn exactly in {seconds:.1f} s (a replay of its own, every frame before whole)")
-    same, lines = compare(args.host, replay, f"{folder}/verify/exact", f"{folder}/game")
+    same, lines = compare(args.host, replay, f"{folder}/{VERIFY}/exact", f"{folder}/game")
     say("rt2_bench: FIDELITY (the replay's frames against the game's own pictures): " + lines[-1])
     for line in lines[:-1]:
         say("    " + line)
@@ -355,16 +357,16 @@ def verify(args):
     # 2. determinism: the moment's frame drawn again by another replay
     last = frames[-1]
     drawn("again", last, -1)
-    ssh(args.host, f"mkdir -p ~/{folder}/verify/exact1 && cp ~/{folder}/verify/exact/frame_{last:05d}.png "
-        f"~/{folder}/verify/exact1/")
-    same, lines = compare(args.host, replay, f"{folder}/verify/again", f"{folder}/verify/exact1")
+    ssh(args.host, f"mkdir -p ~/{folder}/{VERIFY}/exact1 && cp ~/{folder}/{VERIFY}/exact/frame_{last:05d}.png "
+        f"~/{folder}/{VERIFY}/exact1/")
+    same, lines = compare(args.host, replay, f"{folder}/{VERIFY}/again", f"{folder}/{VERIFY}/exact1")
     say("rt2_bench: DETERMINISM (the same frame by two replays): " + lines[-1] +
         f"; the exact frame's mean {exact['stats']['mean']:.6f}")
     ok &= same
     # 3. the fast tries' error: only the warm frames before the moment played whole, against the exact frame
     for warm in [int(w) for w in args.converge.split(",") if w]:
         reply, seconds = drawn(f"warm{warm}", last, warm)
-        same, lines = compare(args.host, replay, f"{folder}/verify/warm{warm}", f"{folder}/verify/exact1")
+        same, lines = compare(args.host, replay, f"{folder}/{VERIFY}/warm{warm}", f"{folder}/{VERIFY}/exact1")
         say(f"rt2_bench: warm {warm} ({seconds:.1f} s): {lines[0] if lines else '?'}; mean "
             f"{reply['stats']['mean']:.6f}")
     # 4. checkpoints: restore plus k frames, unchanged code, against the exact frame (bit for bit)
@@ -405,7 +407,7 @@ def checkpoint_check(args, folder, replay, last):
     """the moment's frame from a checkpoint args.checkpoint frames before it, unchanged code, in the replay that
     kept it, after a play of the whole: the same picture as the exact one, bit for bit"""
     k = args.checkpoint
-    out = f"{folder}/verify/checkpoint"
+    out = f"{folder}/{VERIFY}/checkpoint"
     ssh(args.host, f"mkdir -p ~/{out}")
     service = open_service(args.host, args.build, folder)
     try:
@@ -424,7 +426,7 @@ def checkpoint_check(args, folder, replay, last):
     finally:
         service.close()
     frames_named(args.host, out)
-    same, lines = compare(args.host, replay, out, f"{folder}/verify/exact1")
+    same, lines = compare(args.host, replay, out, f"{folder}/{VERIFY}/exact1")
     say(f"rt2_bench: CHECKPOINT (frame {last} from a checkpoint {k} frames before, unchanged code, against the "
         f"exact frame): {lines[-1] if lines else '?'}; kept in {kept:.1f} s, tries "
         f"{', '.join(f'{x:.1f}' for x in seconds)} s")
@@ -438,7 +440,7 @@ def checkpoint_reach(args, folder, replay, last):
     span = args.span
     first = last - span + 1
     change = " ".join(args.change)
-    out = f"{folder}/verify/reach"
+    out = f"{folder}/{VERIFY}/reach"
     ssh(args.host, f"rm -rf ~/{out} && mkdir -p ~/{out}/exact ~/{out}/try")
     home = service_home(args.host)
     every = max(1, span // 24)
@@ -461,7 +463,7 @@ def checkpoint_reach(args, folder, replay, last):
     _, lines = compare(args.host, replay, f"{out}/try", f"{out}/exact")
     # (the change's own effect: its exact frame against the build's, so that a change that does nothing shows)
     ssh(args.host, f"mkdir -p ~/{out}/own && cp ~/{out}/exact/frame_{last:05d}.png ~/{out}/own/")
-    _, own = compare(args.host, replay, f"{out}/own", f"{folder}/verify/exact1")
+    _, own = compare(args.host, replay, f"{out}/own", f"{folder}/{VERIFY}/exact1")
     say(f"rt2_bench: REACH of {change} from a checkpoint (the build's code before it): the try against the "
         f"change's exact frames (exact {exact_seconds:.1f} s, the try's {span} frames {try_seconds:.1f} s); the "
         f"change itself at frame {last}: {own[0] if own else '?'}")
@@ -942,7 +944,7 @@ class Cache:
                 paths[key] = value
         job = {"folders": list(folders), "replay": replay_path(args.host, args.build), "paths": paths}
         started = time.monotonic()
-        found = json.loads(ssh(args.host, f"python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{FINGERPRINT}\nPY\n")
+        found = json.loads(ssh(args.host, f"MSYS2_ARG_CONV_EXCL='*' python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{FINGERPRINT}\nPY\n")
                            .strip().splitlines()[-1])
         self.seconds = time.monotonic() - started
         for folder in folders:
@@ -1120,20 +1122,19 @@ def analyse(args, files, regions, pictures, save, out):
            "dir": f"{service_home(args.host)}/{save}"}
     w, h = (int(v) for v in SIZE.split("x"))
     job["width"], job["height"] = w, h
-    text = ssh(args.host, f"mkdir -p ~/{save} && python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{ANALYSE}\nPY\n")
+    # (MSYS2_ARG_CONV_EXCL: Git Bash in bosgame's VM hands the job to Windows' Python unconverted)
+    text = ssh(args.host, f"mkdir -p ~/{save} && MSYS2_ARG_CONV_EXCL='*' python3 - {shlex.quote(json.dumps(job))} "
+                          f"<<'PY'\n{ANALYSE}\nPY\n")
     result = json.loads(text.strip().splitlines()[-1])
     if pictures:
-        out.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["scp", "-q", *[f"{rt2_clips.rig_target(args.host)}:{save}/{name}.png" for name in pictures],
-                       str(out)], check=False)
+        rt2_bench_hosts.fetch(args.host, save, [f"{name}.png" for name in pictures], out)
     return result
 
 
 def linux_only(args):
-    """reference, terms and triage: their numbers worked out by numpy on the rig, their pictures copied with scp"""
-    if rt2_clips.windows(args.host):
-        raise SystemExit(f"rt2_bench: {args.what} runs on omarchy or the 5900X (numpy on the rig); view runs on "
-                         f"{args.host} too")
+    """reference, terms and triage: their numbers worked out by numpy on the rig (bosgame's VM too: Python 3.12
+    and numpy there), their pictures copied back (rt2_bench_hosts.fetch: scp, or a tar stream through the VM's
+    hops)"""
 
 
 def regions_of(args):
@@ -1422,10 +1423,16 @@ def main():
     parser.add_argument("show", nargs="?", help="view: the pictures, a comma between (see above)")
     parser.add_argument("--moment", required=True, choices=list(rt2_clips.MOMENTS), help="tools/rt2_clips.py's")
     parser.add_argument("--build", required=True, help="the build (goat-rig build's ref: a branch, local/<name>)")
-    parser.add_argument("--host", default="omarchy", choices=("omarchy", "5900x", *rt2_clips.WINDOWS_HOSTS),
-                        help="the rig (bosgame: the Windows VM with the RTX 3090, through omarchy)")
-    parser.add_argument("--name", help="the recording's folder ~/goat-rig/rt2-bench/<name> (default moment-build)")
-    parser.add_argument("--at", type=float, help="record: the moment's second the recording ends at")
+    parser.add_argument("--host", default=None, choices=("auto", "omarchy", "5900x", *rt2_clips.WINDOWS_HOSTS),
+                        help="the rig (bosgame: the Windows VM with the RTX 3090, through omarchy); auto, the "
+                             "default but for record: the least-busy eligible one, the recording copied there "
+                             "(tools/rt2_bench_hosts.py); record: omarchy by default")
+    parser.add_argument("--name", help="a private recording's folder ~/goat-rig/rt2-bench/<name> (default: the "
+                                       "shared recording of the moment for the build's game side, found by --moment)")
+    parser.add_argument("--force-new", metavar="REASON",
+                        help="record: a new recording although a valid one exists (the reason logged)")
+    parser.add_argument("--at", type=float, help="record: the moment's second the recording ends at; the others: "
+                                                 "the shared recording to that second (default: any)")
     parser.add_argument("--setting-off", action="store_true",
                         help="record: the setting off (the classic look; triage's --classic recording)")
     parser.add_argument("--seconds", type=float, default=420, help="record: the run's limit in real seconds")
@@ -1460,7 +1467,8 @@ def main():
     parser.add_argument("--term-plays", type=int, default=600, help="terms/triage: each term's reference plays")
     parser.add_argument("--skip", type=int, default=200,
                         help="reference: the held plays first left out (the bounce's own history filling)")
-    parser.add_argument("--classic", help="triage: the classic recording's name (record --setting-off --name NAME)")
+    parser.add_argument("--classic", help="triage: the classic recording: auto (the moment's shared --setting-off recording for this "
+                             "game side) or a name")
     parser.add_argument("--scale", type=float, default=0, help="view: white's value (0: the 99th percentile)")
     parser.add_argument("--out", default=str(ROOT / "build" / "rt2_bench"), help="run: the pictures' folder")
     parser.add_argument("--kernels", action="store_true",
@@ -1475,6 +1483,9 @@ def main():
                              "rt2-bench/<name>/cache, keyed by the recording, the replay's code, the kernels, the "
                              "GPU, the settings and the request)")
     args = parser.parse_args()
+    if args.what == "record":
+        return rt2_bench_hosts.record(args, record, build)
+    rt2_bench_hosts.resolve(args, build)
     if args.what in ("view", "reference", "terms", "triage"):
         args.set = [*args.set, *edited_kernels(args)]
     if args.what in ("verify", "run", "view", "reference", "terms", "triage"):
