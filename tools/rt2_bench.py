@@ -724,7 +724,15 @@ def analyse(args, files, regions, pictures, save, out):
     return result
 
 
+def linux_only(args):
+    """reference, terms and triage: their numbers worked out by numpy on the rig, their pictures copied with scp"""
+    if rt2_clips.windows(args.host):
+        raise SystemExit(f"rt2_bench: {args.what} runs on omarchy or the 5900X (numpy on the rig); view runs on "
+                         f"{args.host} too")
+
+
 def regions_of(args):
+    linux_only(args)
     regions = [[float(v) for v in r.split(",")] for r in args.region]
     if any(len(r) != 4 for r in regions):
         raise SystemExit("rt2_bench: --region x,y,w,h")
