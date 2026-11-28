@@ -90,10 +90,10 @@ MOMENTS = {
     # (the opening's Pelican flight, the player in its bay: the bay lit by the game's model lighting where no sky is
     # open above (the forward receivers' interim), its grates and the marines by the pass)
     "b30_bay": (
-        "levels\\b30\\b30", 31, 35,
+        "levels\\b30\\b30", 31, 43,
         [(26, "cheat_deathless_player true")],
-        "29-33 move=0,1; 33-35 hunt",
-        "b30's opening in first person inside the Pelican's bay: its ceiling, its lamps, the marines"),
+        "29-33 move=0,1; 33-43 hunt",
+        "b30's opening in first person inside the Pelican's bay (its ceiling, its lamps, the marines), then the landing"),
     "a10_cryo": (
         "levels\\a10\\a10", 12, 24,
         [(11.5, cam(-52.0, 0.0, 0.6, 180, -12)),
