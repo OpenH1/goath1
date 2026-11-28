@@ -720,7 +720,9 @@ vec4 specular_main(ivec2 pixel)
         vec3 nx = unfold(unpackSnorm2x16(texelFetch(guides, min(pixel + ivec2(1, 0), pass.corners.zw - 1), 0).x));
         vec3 ny = unfold(unpackSnorm2x16(texelFetch(guides, min(pixel + ivec2(0, 1), pass.corners.zw - 1), 0).x));
         vec3 dx = dot(nx, nx) > 0.5 ? nx - normal : vec3(0.0), dy = dot(ny, ny) > 0.5 ? ny - normal : vec3(0.0);
-        alpha2 += min(0.5 * (dot(dx, dx) + dot(dy, dy)), 0.18);
+        // (... and the bump map's own spread within the pixel: Toksvig's variance from its mip level's averaged
+        // normal, the guides' low byte (xgpu_spirv.c's lt_e1_guides); together no more than 0.5)
+        alpha2 += min(0.5 * (dot(dx, dx) + dot(dy, dy)) + float(material & 255u) / 255.0, 0.5);
     }
     float alpha = max(sqrt(alpha2), 1.0e-3);
     vec3 shine = direct_specular(p, n, normal, v, alpha, int(owner), pixel, hs);
