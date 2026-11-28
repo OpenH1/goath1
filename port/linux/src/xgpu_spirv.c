@@ -9459,7 +9459,12 @@ the eye that the game did not place on the view model (the forward table's
 texel 7's y): those are its holder's third-person body's and held weapon's
 (an ammo counter's glow), which the view model stands in for, not where it
 is drawn; a model's own lights (model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS])
-light it no more than in the classic sum.
+light it no more than in the classic sum. The view's own flashlight (its
+row) is the viewer's lamp, not its holder's body's: it lights the
+first-person weapon from the game's own light (t6.xyz, behind the eye on
+the view's axis, as the original's model lighting has it), not from the
+lamp on the barrel that stands in for it in the world's shadows, with no
+visibility ray (nothing of the world is between the two).
 
 The pass's lights the table's rows carry (t4.w >= 0) and the view's
 flashlight (its block row XGPU_SPIRV_LT_KIND_FLASHLIGHT) are then left out
@@ -9635,11 +9640,12 @@ static unsigned int lt_ggx_widened(struct module *m, unsigned int alpha, unsigne
 }
 
 /* a row's (an int) light at the pixel, added to the sum (lt_forward_light's
-loop body) */
+loop body); view_flashlight: the row is the view's flashlight's
+(XGPU_SPIRV_LT_FLASHLIGHT_ROW) */
 static void lt_forward_row(struct module *m, struct pixel_state *state, const struct lt_forward_read *read,
-	unsigned int row)
+	unsigned int row, BOOL view_flashlight)
 {
-	unsigned int t[7], kind, to, d2, d, l, window, x, e, r2, ramp, inner, outer, spot, panel, point, profile;
+	unsigned int t[7], kind, emitter, ray, to, d2, d, l, window, x, e, r2, ramp, inner, outer, spot, panel, point, profile;
 	unsigned int gel_origin, v, z, inverse, a, b, inside, gel, has_gel, lit, seen, merge, lit_merge, taken;
 	int texel;
 
@@ -9648,11 +9654,17 @@ static void lt_forward_row(struct module *m, struct pixel_state *state, const st
 	t[4] = lt_table_texel(m, read->image, row, 4);
 	t[0] = lt_table_texel(m, read->image, row, 0);
 	kind = extract(m, t[4], 3);
+	/* (the view's own flashlight lights the first-person weapon: it is the
+	viewer's lamp, not a light of the holder's third-person body) */
+	if (view_flashlight)
+		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN_EQUAL, kind,
+			constant_float(m, 0.0f)), compare(m, OP_F_ORD_LESS_THAN, kind, constant_float(m, 2.5f))), &lit_merge);
 	/* (the first-person weapon: not the lights of its holder's body and
 	held weapon, which its view model stands in for (within the
 	first-person reach of the eye) but those the game placed on the view
 	model itself (texel 7's y): the third-person body's lights are not
 	where the view model is drawn) */
+	else
 	{
 		unsigned int placed = compare(m, OP_F_ORD_GREATER_THAN, extract(m, lt_table_texel(m, read->image, row, 7), 1),
 			constant_float(m, 0.5f));
@@ -9669,7 +9681,25 @@ static void lt_forward_row(struct module *m, struct pixel_state *state, const st
 	for (texel = 1; texel < 7; texel++)
 		if (texel != 4)
 			t[texel] = lt_table_texel(m, read->image, row, texel);
-	to = fsub(m, 3, xyz(m, t[0]), read->p);
+	/* (the view's flashlight on the first-person weapon: from the game's
+	own light (texel 6, where the gel is projected from: behind the eye on
+	the view's axis, first_person_weapon_center_flashlight), the light the
+	original's model lighting lights the view model by. The lamp on the
+	barrel (texel 0) stands in for it only so the world's shadows show
+	beside what casts them; the view model is behind that stand-in. Nothing
+	of the world comes between the viewer's lamp and the weapon in hand,
+	so no visibility ray) */
+	emitter = xyz(m, t[0]);
+	ray = constant_bool(m, TRUE);
+	if (view_flashlight)
+	{
+		unsigned int centered = op2(m, OP_LOGICAL_AND, m->t_bool, read->first_person,
+			compare(m, OP_F_ORD_GREATER_THAN, extract(m, t[6], 3), constant_float(m, 0.5f)));
+
+		emitter = select_n(m, 3, centered, xyz(m, t[6]), emitter);
+		ray = op1(m, OP_LOGICAL_NOT, m->t_bool, centered);
+	}
+	to = fsub(m, 3, emitter, read->p);
 	d2 = fmax_scalar(m, 1, fdot(m, to, to), 1.0e-8f);
 	d = fsqrt(m, d2);
 	l = fdiv(m, 3, to, splat(m, 3, d));
@@ -9719,8 +9749,9 @@ static void lt_forward_row(struct module *m, struct pixel_state *state, const st
 		unsigned int ray_merge, lit_variable = local(m, &state->locals, m->t_float);
 
 		store(m, lit_variable, lit);
-		selection_begin(m, compare(m, OP_F_ORD_GREATER_THAN, lit, constant_float(m, 0.0f)), &ray_merge);
-		seen = lt_forward_visible(m, state, read->origin, xyz(m, t[0]), extract(m, t[0], 3),
+		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN, lit,
+			constant_float(m, 0.0f)), ray), &ray_merge);
+		seen = lt_forward_visible(m, state, read->origin, emitter, extract(m, t[0], 3),
 			op1(m, OP_CONVERT_F_TO_S, m->t_int, extract(m, t[5], 0)), read->receiver);
 		store(m, lit_variable, fmul(m, 1, lit, seen));
 		selection_end(m, ray_merge);
@@ -9881,7 +9912,7 @@ static unsigned int lt_forward_light(struct module *m, struct pixel_state *state
 			taken = op2(m, OP_LOGICAL_AND, m->t_bool, taken, op1(m, OP_LOGICAL_NOT, m->t_bool, mine));
 		}
 		selection_begin(m, taken, &merge);
-		lt_forward_row(m, state, &read, light);
+		lt_forward_row(m, state, &read, light, FALSE);
 		selection_end(m, merge);
 	}
 	branch(m, inner_continue);
@@ -9894,7 +9925,7 @@ static unsigned int lt_forward_light(struct module *m, struct pixel_state *state
 	branch(m, outer_header);
 	label_at(m, outer_merge);
 	/* (the view's shadowed flashlight, E1's, in its own row) */
-	lt_forward_row(m, state, &read, constant_int(m, XGPU_SPIRV_LT_FLASHLIGHT_ROW));
+	lt_forward_row(m, state, &read, constant_int(m, XGPU_SPIRV_LT_FLASHLIGHT_ROW), TRUE);
 	if (read.spec)
 	{
 		int k;
