@@ -14,7 +14,7 @@ window (1 - (d/r)^4)^2, times the receiver's cosine (d3d8_device.c's look[0], xg
 dynamic_light_sum_classic and dynamic_light_add_classic); no shadows. The pass adds k x color^2.2 x W(d/r) /
 max(d^2, emitter^2) x cosine, shadowed (lt/e1.frag). So at every pixel the classic's light is the pass's unshadowed
 light at k = 1 times R(d) = BRIGHTNESS x max(d^2, emitter^2) / (1 + core d^2), and the measure compares LIGHT
-(demodulated irradiance, Erin's rule for the truth comparisons), not finished pictures:
+(demodulated irradiance, as the truth comparisons are), not finished pictures:
 
 - each light alone in a held frame (HALO_LT_ONLY=ids:<id>, the sun, the bounce off, k = 1 by HALO_LT_KIND_SCALE,
   HALO_LT_E1=accumulate PLAYS plays: converged), its irradiance and each pixel's d/r (HALO_LT_E1_DUMP,
