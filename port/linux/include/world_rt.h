@@ -52,6 +52,10 @@ enum
 	first person (its own: it casts shadows, and nothing else sees it) */
 	WORLD_RT_FIRST_PERSON = 4,
 	WORLD_RT_PLAYER = 8,
+	/* (with the ray-traced lighting) an object that casts no shadow
+	(world_proxies_source_instance's shadowless): its own mask, which
+	every ray takes but the pass's sun's dynamic one */
+	WORLD_RT_SHADOWLESS = 16,
 	/* the first-person models' owners (the skinned structures' keys: not
 	their unit's, whose body has its own) */
 	WORLD_RT_FIRST_PERSON_OWNER = 0xFFFFF0,

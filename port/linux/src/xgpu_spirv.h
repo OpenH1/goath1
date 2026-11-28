@@ -400,13 +400,14 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 XGPU_WORLD_AO_INSTANCE_*): the structure, objects, the first-person weapon
 (drawn in a view of its own: no world ray meets it), and the local
 player's own body in first person (which casts shadows, and nothing else
-sees); the rays' masks: the occlusion's (the structure and objects), the
-shadows' (and the player's body) */
-#define XGPU_SPIRV_RT_MASK_AO 0x03u
-#define XGPU_SPIRV_RT_MASK_SHADOWS 0x0Bu
+sees), and (the ray-traced lighting's) an object that casts no shadow,
+which only the pass's sun leaves out; the rays' masks: the occlusion's
+(the structure and objects), the shadows' (and the player's body) */
+#define XGPU_SPIRV_RT_MASK_AO 0x13u
+#define XGPU_SPIRV_RT_MASK_SHADOWS 0x1Bu
 /* (display.rt_reflections' rays: the structure, objects and the player's
 own body, who sees themself in a polished floor) */
-#define XGPU_SPIRV_RT_MASK_REFLECTIONS 0x0Bu
+#define XGPU_SPIRV_RT_MASK_REFLECTIONS 0x1Bu
 
 /* the ray-traced scene's skinning (xgpu_vulkan_rt.c): a compute shader of
 XGPU_SPIRV_RT_SKIN_GROUP invocations a group, one a vertex (x) of a job

@@ -40,6 +40,8 @@ as it changes, halo_world_rt_textures).
 
 /* (port/linux/game/lt_lights.c: the ray-traced lighting on) */
 int lt_lights_pass_on(void);
+/* (port/linux/game/world_proxies_game.c: a static placement the lightmaps hold, world_proxies.h) */
+int world_proxies_source_lightmapped(long id);
 
 #include <math.h>
 #include <stdio.h>
@@ -1213,11 +1215,23 @@ void world_rt_frame(unsigned long frame)
 	{
 		struct world_proxies_source_instance const *object = &world_rt.objects[object_index];
 		struct world_rt_definition const *definition;
-		unsigned long owner = object->baked ? 0 : world_rt_owner(object->id);
+		/* (and with the ray-traced lighting, a static placement whatever the
+		field, which display.ambient_occlusion "off" has none of: the
+		lightmaps hold its sun shadow as the structure's, so the pass's sun
+		rays take it for the structure, never for a dynamic object whose
+		shadow the lightmap lacks (lt/e1.frag's sun_share: the sun's share
+		taken off a lightmap already dark there, below 0 in a channel) */
+		int structure = object->baked || (lt_lights_pass_on() && world_proxies_source_lightmapped(object->id));
+		unsigned long owner = structure ? 0 : world_rt_owner(object->id);
 		/* (the body a local player sees from in first person: its own mask,
 		as drawn) */
-		unsigned int kind = object->baked ? WORLD_RT_STRUCTURE : object->first_person && world_rt.render_geometry ?
+		unsigned int kind = structure ? WORLD_RT_STRUCTURE : object->first_person && world_rt.render_geometry ?
 			WORLD_RT_PLAYER : WORLD_RT_OBJECT;
+		/* (with the ray-traced lighting, one that casts no shadow, b30's
+		ring overhead: its own mask, which the pass's sun leaves out, as the
+		game draws it no shadow and the lightmap has none of it) */
+		if (kind == WORLD_RT_OBJECT && object->shadowless && lt_lights_pass_on())
+			kind = WORLD_RT_SHADOWLESS;
 		short node_count, node_index, permutation_count;
 
 		definition = world_rt_definition(object->definition);

@@ -2124,7 +2124,8 @@ static int rt_instance_of(const struct xgpu_world_ao_instance *given, VkAccelera
 
 	if (!mesh || given->owner >= XGPU_WORLD_AO_INSTANCE_OWNERS ||
 		(given->kind != XGPU_WORLD_AO_INSTANCE_STRUCTURE && given->kind != XGPU_WORLD_AO_INSTANCE_OBJECT &&
-			given->kind != XGPU_WORLD_AO_INSTANCE_FIRST_PERSON && given->kind != XGPU_WORLD_AO_INSTANCE_PLAYER))
+			given->kind != XGPU_WORLD_AO_INSTANCE_FIRST_PERSON && given->kind != XGPU_WORLD_AO_INSTANCE_PLAYER &&
+			given->kind != XGPU_WORLD_AO_INSTANCE_SHADOWLESS))
 		return 0;
 	/* (a skinned mesh's: its object's, skinned and refit this frame; a
 	posed one's alone) */

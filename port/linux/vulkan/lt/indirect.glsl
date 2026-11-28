@@ -44,7 +44,7 @@
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
 #define KIND_MODEL 4u
-#define MASK_REFLECTIONS 0x0Bu
+#define MASK_REFLECTIONS 0x1Bu
 // the rays' reach (world units), the reflections' fade from 80% of it (display.rt_reflections')
 #define BOUNCE_REACH 32.0
 #define SPECULAR_REACH 25.0
@@ -569,7 +569,9 @@ vec3 direct_specular(vec3 p, vec3 n, vec3 normal, vec3 v, float alpha, int recei
         float lobe = ggx_lobe(normal, v, t1.xyz, min(alpha + 0.5 * t5.w, 1.0));
         if (lobe * luminance_of(t4.rgb) * cosine <= 1.0e-4)
             continue;
-        spec += t4.rgb * cosine * lobe * visible_by(origin, t1.xyz, SUN_REACH, -1, 0xffffffffu, MASK_REFLECTIONS);
+        // (the sun's blockers: not an object that casts no shadow, e1.frag's RT_MASK_DYNAMIC)
+        spec += t4.rgb * cosine * lobe * visible_by(origin, t1.xyz, SUN_REACH, -1, 0xffffffffu,
+            RT_MASK_STRUCTURE | RT_MASK_DYNAMIC);
     }
     if (any(isnan(spec)) || any(isinf(spec)))
         spec = vec3(0.0);

@@ -1958,6 +1958,11 @@ own mask bit, which the passes' rays leave out), and the local player's
 own body in first person, which casts shadows and nothing else sees */
 #define XGPU_WORLD_AO_INSTANCE_FIRST_PERSON 4u
 #define XGPU_WORLD_AO_INSTANCE_PLAYER 8u
+/* (with the ray-traced lighting) an object that casts no shadow (its
+definition's "does not cast shadow", a device's: b30's ring overhead): an
+object to every ray but the pass's sun's, which takes off the lightmap's
+sun only where an object casting a shadow the lightmap lacks blocks it */
+#define XGPU_WORLD_AO_INSTANCE_SHADOWLESS 16u
 #define XGPU_WORLD_AO_INSTANCE_OWNERS (1u << 24)
 struct xgpu_world_ao_instance
 {
