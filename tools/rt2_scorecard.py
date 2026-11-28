@@ -83,6 +83,10 @@ SCENES = [
     # the progress clip's two moments, the light list and motion recorded)
     ("b30sun", "b30_sun.hrpl", 650, "b30's beach in the sun: the Pelican, a Warthog, an Elite, the player (sun shadows)"),
     ("b30fight", "b30_fight.hrpl", 600, "b30's beach firefight: plasma bolts, needles, a grenade by a Warthog"),
+# (live mode, the lightmap dropped: the sky's sun, fill, dome and bounce, recorded with the setting alone and the MCC
+# import from local/rt2-outdoor-real-light; on omarchy only)
+    ("b30live", "b30_live.hrpl", 560, "b30's beach lit live: a Warthog and an Elite in the sun, the cliff's shade"),
+    ("bglive", "bg_live.hrpl", 500, "Blood Gulch lit live: a base wall, the sun's edge across it"),
 ]
 # the visual checks (each found escaped once, by the progress clip of f7223c72e): on omarchy, shared, the pictures
 # of the presented frame (sRGB decoded): (name, recording, frame, what)
