@@ -543,6 +543,10 @@ PRESENT bit). */
 #define XGPU_SPIRV_GUIDES_LOCATION 1
 #define XGPU_SPIRV_GUIDES_MATERIAL_MASK 0xFFFFu
 #define XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT 16
+/* (the material word's low byte: a bump-mapped surface's own normal
+variance within the pixel, Toksvig's, 0 to 1 by 255ths: lt/indirect.glsl's
+shine) */
+#define XGPU_SPIRV_GUIDES_BUMP_VARIANCE_MASK 0xFFu
 #define XGPU_SPIRV_GUIDES_SPECULAR_SHIFT 24
 #define XGPU_SPIRV_GUIDES_ROUGHNESS_NONE 255u
 #define XGPU_SPIRV_GUIDES_MOTION_NONE 0u

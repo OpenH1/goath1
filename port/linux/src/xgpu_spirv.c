@@ -2192,6 +2192,10 @@ struct pixel_state
 	/* the one light model's shine (lt_ggx): its sum (a vec3 variable, 0
 	none), the to-eye vector and the material's alpha it is found by */
 	unsigned int lt_spec, lt_spec_v, lt_spec_alpha;
+	/* (HALO_LT_E1's guides) the bump map's own variance within the pixel,
+	Toksvig's from the mip-filtered normal's shortening, (1 - L) / L: a
+	float, 0 none (lt_e1_guides) */
+	unsigned int bump_variance;
 	/* a level lit live (a sky dome row in the table: lt_forward_sky): a bool
 	variable, 0 none made yet; and whether the sky is open straight above
 	the receiver there (a float variable, 1 or 0) */
@@ -6598,6 +6602,16 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
 		lt_shaded_normal = n;
+		/* (the bump's normals the mip level averages: the shorter their mean,
+		the more they spread, Toksvig's (1 - L) / L, the shine's lobe widened
+		by it in the pass: far sand's bumps finer than its pixel) */
+		if (program->stages[0].sampler == _xgpu_sampler_2d)
+		{
+			unsigned int length = ext2(&m, GLSL_F_MIN, m.t_float, flength(&m, bump), constant_float(&m, 1.0f));
+
+			state.bump_variance = fdiv(&m, 1, fsub(&m, 1, constant_float(&m, 1.0f), length),
+				fmax_scalar(&m, 1, length, 0.05f));
+		}
 		/* (the classic light model without the ray-traced lighting: lt_light_model) */
 		if (!lt_light_model())
 		{
@@ -9379,6 +9393,12 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 	material = op2(m, OP_BITWISE_OR, m->t_uint, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, roughness,
 		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT)), constant_uint(m, specular ? 255u <<
 		XGPU_SPIRV_GUIDES_SPECULAR_SHIFT : 0u));
+	/* (the bump's own variance in the low byte, 0 to 1 by 255ths:
+	XGPU_SPIRV_GUIDES_BUMP_VARIANCE_MASK) */
+	if (state->bump_variance)
+		material = op2(m, OP_BITWISE_OR, m->t_uint, material, op1(m, OP_BITCAST, m->t_uint, op1(m,
+			OP_CONVERT_F_TO_S, m->t_int, ext1(m, GLSL_FLOOR, m->t_float, fadd(m, 1, fmul(m, 1, saturate(m, 1,
+			state->bump_variance), constant_float(m, 255.0f)), constant_float(m, 0.5f))))));
 	return op(m, OP_COMPOSITE_CONSTRUCT, m->t_uv4, 4, (unsigned int[]){ lt_octahedral(m, shaded ? shaded : normal),
 		lt_octahedral(m, normal), material, motion });
 }
