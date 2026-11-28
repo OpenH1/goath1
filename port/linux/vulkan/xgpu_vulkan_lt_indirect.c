@@ -189,6 +189,8 @@ static int indirect_shaders(void)
 		started again) */
 		indirect.made = indirect.failed = indirect.cache_valid = indirect.bounce_history_valid = 0;
 		indirect.current = indirect.cache_current = 0;
+		/* (the bounce's phase counted from the start again) */
+		indirect.frames = 0;
 		indirect.generation = generation;
 	}
 	if (indirect.made)
