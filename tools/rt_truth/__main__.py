@@ -49,6 +49,8 @@ def main():
     e.add_argument("--cell", type=float, default=12.0, help="rooms: the cell, wu")
     e.add_argument("--fixtures", default="on", choices=("on", "off"),
                    help="rooms: the baked objects' glowing parts (light fixtures' lamps) as lamp groups too")
+    e.add_argument("--cones", default="off", choices=("on", "off"),
+                   help="rooms: a fixture's light cone or card a lamp group beside its glowing lamp (study)")
     e.add_argument("--outside", type=float, default=0.05, help="rooms: a cell whose lamps give under this share of "
                    "the bake's light is the sky's (an opening, a hull outside), left out")
     e.add_argument("--patch-size", type=float, default=2.0, help="the candidate patches' cell, wu")
@@ -85,13 +87,14 @@ def main():
         _E.GLOW_PATTERN = a.glow == "map"
         _E.TARGET_GAMMA = a.target_gamma
         _E.FIXTURES = getattr(a, "fixtures", "on") == "on"
+        _E.CONES = getattr(a, "cones", "off") == "on"
         from .render import GpuLock, wait_for_no_player
         import os
         wait_for_no_player(print)
         with GpuLock(os.path.expanduser("~/goat-rig/locks/gpu.lock"), print):  # shared, as a truth render: no timing run
             if a.mode == "rooms":
                 return _E.solve_rooms(a.scene, a.out, spp=max(a.spp, 128), max_samples=a.samples, cell=a.cell,
-                                     outside=a.outside)
+                                     outside=a.outside, report=a.report)
             solve_level(a.scene, a.out, spp=a.spp, max_samples=a.samples, max_added=a.max_added,
                         report=a.report, weights=a.weights, patch_size=a.patch_size)
     elif a.cmd == "compare":

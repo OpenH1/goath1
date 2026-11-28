@@ -9,7 +9,7 @@ Made by `python -m rt_truth emitters <scene folder> --out <file>` (tools/rt_trut
 emitters") from any rt2 scene export of that BSP. In short, each `lamps` entry has `radiance` (linear, the game's light units) and `triangles` (world
 positions, lifted 0.01 wu off the surface, wound to glow toward their normal) to sample as area lights.
 
-The build packs each file (tools/lt_emitters_data.py: about 384 KB for the 21 shipped, zlib) into openh1.assets beside
+The build packs each file (tools/lt_emitters_data.py: about 416 KB for the 23 shipped, zlib) into openh1.assets beside
 the game, and the game unpacks the loaded BSP's at map load; `python3 tools/lt_emitters_data.py --check` fails
 where a file does not build or holds more than the game takes (8192 triangles, 1024 groups a BSP).
 
@@ -60,7 +60,8 @@ share the sky's own tags give (traced too, fitted where only the sky lights, the
 the file). 2048 paths: c20 bsp1's cells match the same at 4096 (x2.95 both before the sky rule), while 128
 (the first two files' count) gave x4.05; a10 and c20 bsp0 were solved again at 2048 here, and again with
 the fixtures (below), and both they and their first (128-path) files fail the screen. The table is every BSP solved;
-the files shipped are the ones that passed the screen.
+the files shipped are the ones that passed the screen. The a50 and d20 rows are the re-solve with the fixtures
+thinned (below, "Fixtures fitted").
 
 | BSP | lamp groups | triangles | lamps / bake | typical cell | sky |
 |---|---|---|---|---|---|
@@ -73,8 +74,9 @@ the files shipped are the ones that passed the screen.
 | a10_bsp6 | 31 | 828 | 0.99 | x1.27 | 0% |
 | a10_bsp8 | 67 | 399 | 0.92 | x1.61 | 0% |
 | a30_bsp1 | 46 | 1236 | 0.90 | x1.89 | 87% |
-| a50_bsp2 | 46 | 1176 | 0.99 | x3.04 | 3% |
-| a50_bsp3 | 48 | 850 | 1.00 | x1.03 | 3% |
+| a50_bsp1 | 78 | 1802 | 0.99 | x2.59 | 0% |
+| a50_bsp2 | 64 | 1342 | 0.99 | x3.03 | 3% |
+| a50_bsp3 | 63 | 1000 | 1.00 | x1.02 | 3% |
 | b40_bsp0 | 134 | 3304 | 0.88 | x1.64 | 62% |
 | b40_bsp3 | 162 | 1818 | 0.86 | x1.88 | 0% |
 | b40_bsp4 | 142 | 3456 | 1.00 | x1.07 | 0% |
@@ -101,10 +103,11 @@ the files shipped are the ones that passed the screen.
 | c40_bsp10 | 144 | 2840 | 0.99 | x1.22 | 0% |
 | c40_bsp11 | 164 | 3432 | 1.00 | x1.29 | 0% |
 | c40_bsp12 | 47 | 1048 | 1.00 | x1.08 | 0% |
-| d20_bsp1 | 52 | 5528 | 0.87 | x2.25 | 61% |
-| d20_bsp2 | 65 | 1274 | 0.98 | x1.10 | 8% |
-| d20_bsp3 | 49 | 1160 | 0.98 | x3.52 | 61% |
-| d20_bsp4 | 24 | 294 | 0.98 | x1.14 | 1% |
+| d20_bsp0 | 58 | 1197 | 0.98 | x2.48 | 2% |
+| d20_bsp1 | 58 | 5756 | 0.87 | x2.12 | 61% |
+| d20_bsp2 | 85 | 1457 | 1.00 | x1.15 | 8% |
+| d20_bsp3 | 70 | 1468 | 0.98 | x4.42 | 61% |
+| d20_bsp4 | 34 | 706 | 0.99 | x1.15 | 1% |
 | d40_bsp0 | 15 | 262 | 0.99 | x1.16 | 84% |
 | d40_bsp1 | 30 | 294 | 0.97 | x1.30 | 92% |
 | d40_bsp2 | 27 | 653 | 0.98 | x1.53 | 0% |
@@ -134,8 +137,22 @@ solver's own transport at the screen's spots (texels near a spot, each lamp grou
   (`fit.power_share_at_limit`, warned on above 5%). Machines and controls (doors, lifts) move, so they are not
   in the file.
   d20 bsp4 with its fixtures: no group at the limit, its first spot from x0.13 (71% black) to x0.62 (6%), its
-  second x0.30 to x0.45, still short. d20 bsp0-3 and a50 bsp1-3 with fixtures hold 14,000 to 40,000 triangles,
+  second x0.30 to x0.45, still short. d20 bsp0-3 and a50 bsp1-3 with fixtures held 14,000 to 40,000 triangles (fitted since: below),
   past the game's 8192, and d20 bsp0/1/2 and a50 bsp1 still hold 8-48% of their power at the limit: not shipped.
+- **Fixtures fitted (2026-11-28).** The fixtures' triangles were their whole meshes: light_ceiling's housing (58
+  triangles, its lens 2), its volumetric cone (72 a fixture, both faces) and every crate whose shader has a
+  self-illumination colour (208, none of it lit). Now (emitters.py `fixture_groups`): a model part keeps only the
+  triangles holding 99% of its glow, area x the self-illumination mask (the multipurpose map's green)^2.2 read at 7
+  points a triangle; a fixture's light cone or card is a source only on a fixture without such a lamp (an additive
+  shader with no radiosity power: the lamp's light seen in the air, not a second source); and a fixture outside the
+  BSP's lightmapped cells, or whose light reaches the bake at under 1% of the fixtures' typical reach for its area,
+  is left out (the scenario's objects stand in every BSP: d20 bsp0's groups at the limit were other halls' lamps
+  the bake cannot set). d20 bsp0 went from 21,079 fixture triangles to about 460, a50 bsp1 from 31,982 to 170;
+  every BSP fits the game's 8192 (the most 5756, d20 bsp1's own strips), so the limit stays. Power at the 20x limit:
+  0 for a50 bsp1-3, d20 bsp0 and bsp3, 3% d20 bsp2, 0.7% d20 bsp4; d20 bsp1 still 36% (one BSP strip group, sky
+  61%), not screened. The screen (below): d20 bsp2 and bsp3 pass and ship; a50 bsp1-3, d20 bsp0 and bsp4 still go
+  dark at a spot (x0.35 to x0.66, black 13-27%), as their cell spread says (x2.5 to x3 the solver's own, d20 bsp4
+  short of its bake in game though x1.15 solved): not shipped.
 - Not the cause at d20 bsp4's spot: the 32-group cell list. The level power mixed into the pick keeps every
   lamp drawable, and the strip that lit the cell there is 40% of the level's power. With the shadow rays off, its
   light arrives.
@@ -189,6 +206,10 @@ Shipped, screened with the contrast fix (below; a10_bsp1 has one spot: no second
 | c40_bsp8 | 2 | x0.80 | x0.74 | x0.86 | 0% | 6% | 0% | pass |
 | c40_bsp10 | 1 | x1.16 | x1.17 | x1.22 | 0% | 0% | 0% | pass |
 | c40_bsp10 | 2 | x1.56 | x1.85 | x0.95 | 0% | 0% | 0% | pass |
+| d20_bsp2 | 1 | x0.69 | x0.76 | x0.69 | 4% | 12% | 0% | pass |
+| d20_bsp2 | 2 | x0.73 | x0.64 | x1.01 | 2% | 7% | 0% | pass |
+| d20_bsp3 | 1 | x1.35 | x2.08 | x1.06 | 6% | 24% | 0% | pass |
+| d20_bsp3 | 2 | x1.01 | x0.93 | x1.26 | 3% | 13% | 0% | pass |
 | d40_bsp1 | 1 | x1.18 | x1.02 | x1.28 | 0% | 1% | 0% | pass |
 | d40_bsp1 | 2 | x1.17 | x1.21 | x1.32 | 0% | 2% | 0% | pass |
 | d40_bsp2 | 1 | x0.78 | x0.65 | x0.94 | 3% | 25% | 0% | pass |
@@ -207,10 +228,7 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 - c40_bsp1: outdoors (sky 35%); lamps 0.67 of the rest, x4.0.
 - c40_bsp2: lamps reach 0.71 of the bake (held at 20x), x2.6.
 - d40_bsp8: all sky: no lamp-lit cell.
-- a50_bsp1 (60 groups, x2.63): looked at in game (tools/rt2_clips.py a50_bsp1), its lamp-lit room goes nearly black live
-  where the bake lights its walls and floor green.
-- d20_bsp0 (43 groups, x2.71): looked at in game (d20_bsp0), the first hall's lower floor goes black live where the
-  bake lights it, while its walls come out brighter.
+- d20_bsp1: 36% of its lamps' power held at the 20x limit (sky 61%): not screened.
 - Failed the screen, or not looked at ("nothing in view"). a10 bsp0, c20 bsp0 and c40 bsp7 shipped before the contrast fix. Their files fail now, re-solved too (a10's second spot blown, c20's library blown, c40's second spot x1.8), so they keep their lightmap:
 
 | BSP | spot | overall | floor | walls | black | worst cell | blown | verdict |
@@ -224,12 +242,12 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 | a10_bsp8 | 2 | x1.15 | x1.00 | x1.11 | 0% | 0% | 0% | nothing in view |
 | a30_bsp1 | 1 | x0.25 | x0.24 | x0.26 | 54% | 86% | 0% | FAIL |
 | a30_bsp1 | 2 | x0.94 | x0.95 | x0.94 | 0% | 0% | 0% | pass |
-| a50_bsp1 | 1 | x0.25 | x0.13 | x0.29 | 4% | 47% | 0% | FAIL |
-| a50_bsp1 | 2 | x0.55 | x0.53 | x0.46 | 6% | 46% | 0% | FAIL |
-| a50_bsp2 | 1 | x0.85 | x1.09 | x0.47 | 6% | 25% | 0% | pass |
-| a50_bsp2 | 2 | x0.49 | x0.33 | x0.56 | 6% | 15% | 0% | FAIL |
-| a50_bsp3 | 1 | x0.80 | x0.82 | x0.69 | 12% | 67% | 0% | FAIL |
-| a50_bsp3 | 2 | x0.46 | x0.14 | x0.66 | 8% | 44% | 0% | FAIL |
+| a50_bsp1 (fixtures fitted) | 1 | x0.36 | x0.25 | x0.33 | 27% | 95% | 0% | FAIL |
+| a50_bsp1 (fixtures fitted) | 2 | x0.35 | x0.31 | x0.31 | 18% | 76% | 0% | FAIL |
+| a50_bsp2 (fixtures fitted) | 1 | x0.80 | x0.99 | x0.51 | 4% | 24% | 0% | pass |
+| a50_bsp2 (fixtures fitted) | 2 | x0.45 | x0.39 | x0.44 | 4% | 12% | 0% | FAIL |
+| a50_bsp3 (fixtures fitted) | 1 | x0.82 | x0.83 | x0.74 | 13% | 79% | 0% | FAIL |
+| a50_bsp3 (fixtures fitted) | 2 | x0.43 | x0.05 | x0.63 | 7% | 44% | 0% | FAIL |
 | b40_bsp0 | 1 | x0.60 | x0.71 | x0.48 | 1% | 5% | 0% | FAIL |
 | b40_bsp0 | 2 | x0.71 | x0.68 | x0.66 | 1% | 8% | 0% | pass |
 | b40_bsp11 | 1 | x1.48 | x1.81 | x0.90 | 0% | 0% | 0% | nothing in view |
@@ -256,16 +274,12 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 | c40_bsp7 (re-solved with fixtures) | 2 | x1.81 | x2.17 | x1.83 | 0% | 0% | 0% | FAIL |
 | c40_bsp9 | 1 | x1.38 | x1.70 | x1.22 | 0% | 4% | 0% | pass |
 | c40_bsp9 | 2 | x1.03 | x0.49 | x1.70 | 45% | 100% | 0% | FAIL |
-| d20_bsp0 | 1 | x1.39 | x0.54 | x1.44 | 8% | 38% | 0% | pass |
-| d20_bsp0 | 2 | x0.68 | x0.46 | x0.97 | 14% | 67% | 0% | FAIL |
+| d20_bsp0 (fixtures fitted) | 1 | x0.66 | x0.49 | x0.90 | 14% | 67% | 0% | FAIL |
+| d20_bsp0 (fixtures fitted) | 2 | x1.03 | x0.51 | x1.07 | 8% | 38% | 0% | pass |
 | d20_bsp1 | 1 | x1.07 | x0.96 | x1.04 | 0% | 2% | 0% | pass |
 | d20_bsp1 | 2 | x0.73 | x0.95 | x0.58 | 14% | 51% | 0% | FAIL |
-| d20_bsp2 | 1 | x0.32 | x0.24 | x0.34 | 20% | 84% | 0% | FAIL |
-| d20_bsp2 | 2 | x0.35 | x0.12 | x0.60 | 44% | 98% | 0% | FAIL |
-| d20_bsp3 | 1 | x1.84 | x3.42 | x1.26 | 4% | 21% | 0% | FAIL |
-| d20_bsp3 | 2 | x1.09 | x0.97 | x1.32 | 4% | 14% | 0% | pass |
-| d20_bsp4 (re-solved with fixtures) | 1 | x0.62 | x0.41 | x0.93 | 6% | 27% | 0% | pass |
-| d20_bsp4 (re-solved with fixtures) | 2 | x0.45 | x0.32 | x0.40 | 19% | 72% | 0% | FAIL |
+| d20_bsp4 (fixtures fitted) | 1 | x0.48 | x0.40 | x0.52 | 24% | 62% | 0% | FAIL |
+| d20_bsp4 (fixtures fitted) | 2 | x0.62 | x0.52 | x0.81 | 18% | 61% | 0% | FAIL |
 | d40_bsp0 | 1 | x0.45 | x0.50 | x0.47 | 22% | 95% | 0% | FAIL |
 | d40_bsp0 | 2 | x0.54 | x0.46 | x0.56 | 1% | 7% | 0% | FAIL |
 | d40_bsp3 | 1 | x0.99 | x1.00 | x1.05 | 2% | 11% | 0% | pass |
