@@ -158,12 +158,18 @@ records, what every value of it would:
   (panini.c), played back where it is on now (panini_replay_projection);
 - per_pixel_lighting: the model lighting's pipelines, made as the record
   plays;
+- rt_reflections: each draw's reflection's tag is journaled whatever the
+  setting (d3d8_device.c, draw_inputs' rt_reflection), traced as the
+  setting is now;
 - shadow_resolution: the shadow maps' size, which the journal does not hold;
 - smooth_lightmaps: the lightmap pass's pipelines, made as the record
   plays (d3d8_device.c, smooth_lightmaps_on);
 - soft_particles: the effect's group that can be soft is journaled whatever
   the setting (d3d8_device.c, soft_effect_key), each draw of it soft as the
   setting is now;
+- temporal_aa: the objects' span is journaled whatever the setting
+  (draw_inputs' motion_objects), their motion's variants made as the record
+  plays;
 - structure_culling: none in the walk (structure_culling.c), the game's own
   visibility's frame;
 - first_person_legs, viewmodel_visible: the walk draws every first-person and
@@ -178,9 +184,8 @@ static char const *const prepared_settings[] =
 	"display.battery_saver", "display.dynamic_lights", "display.graphics", "display.hdr", "display.hdr_highlight_boost",
 	"display.hdr_mode", "display.high_res_hud", "display.high_res_text", "display.model_detail",
 	"display.output_depth", "display.overshield_effect", "display.panini", "display.panini_vertical",
-	"display.per_pixel_lighting", "display.shadow_resolution", "display.shield_glow", "display.smooth_lightmaps",
-	"display.soft_particles",
-	"display.structure_culling", "display.first_person_legs", "display.viewmodel_shield", "display.viewmodel_visible",
+	"display.per_pixel_lighting", "display.rt_reflections", "display.shadow_resolution", "display.shield_glow",
+	"display.smooth_lightmaps", "display.soft_particles", "display.structure_culling", "display.temporal_aa", "display.first_person_legs", "display.viewmodel_shield", "display.viewmodel_visible",
 };
 static struct
 {

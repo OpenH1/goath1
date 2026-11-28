@@ -149,9 +149,6 @@ def test_draw_inputs_negative(name):
 KEPT_ELSEWHERE = {
     'halo_world_ao_object': "the ray-traced scene's owner: a uniform (world_object), no key",
     'halo_world_ao_cards': "the cards' flag: a uniform (world_object), no key",
-    'halo_rt_reflection': "display.rt_reflections' tag (off by default): a record's draw has none (d3d8_device.c's "
-                          "rt_reflection_modes), so the shipped records keep their form; the traced variants are made "
-                          "at their first draw. Into struct draw_inputs when the records are next made again",
     'halo_shadow_map_scale': "display.shadow_resolution's scale: the shadow maps' size, made as a record plays",
     'halo_screen_ui_offset': "the menus' centring: the viewport, dynamic state",
     'halo_screen_ui_offset_to': "the menus' centring: the viewport, dynamic state",
