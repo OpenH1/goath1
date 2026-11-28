@@ -91,6 +91,14 @@ the median of their 357 lamps, 5.36 (quartiles 1.57 and 42.7;
 ~/dev/rt2-calibration.json's object_lamps); a triangle glowing less on
 average (its luminance) is no lamp, and its samples a side */
 #define WORLD_RT_LAMP_K 5.36f
+/* (an additive part's lamps are its energy glow's, xgpu_hdr.h's
+HALO_HDR_KIND_ENERGY: their colour as the camera's mode draws it, gained
+(world_rt_energy), to the pass's units by the frame's own curve (2.2), no
+K: what is seen of it is the light it casts) */
+/* (xgpu_hdr.h's XGPU_HDR_BOOST_STEP x XGPU_HDR_ENERGY_LEVEL, and
+XGPU_HDR_CEILING_ENERGY_VALUE: the game's copy) */
+#define WORLD_RT_ENERGY_GAIN (0.25f * 7.0f)
+#define WORLD_RT_ENERGY_CEILING 2.573330f
 /* (a material's kind: its shader's type, shader_transparent_generic's) */
 #define WORLD_RT_SHADER_TRANSPARENT_GENERIC 5
 #define WORLD_RT_LAMP_LEAST 0.01f
@@ -1012,6 +1020,26 @@ static unsigned long world_rt_lamp_word(unsigned long const *texels, unsigned lo
 	return texels[y * (long)width + x];
 }
 
+/* an energy glow's colour (rgb, as the shader adds it, in [0, 1]) as the
+camera's mode draws it (xgpu_hdr.c's HALO_HDR_KIND_ENERGY, an emitter's
+gain: xgpu_hdr_boost_emitter at XGPU_HDR_ENERGY_LEVEL toward
+XGPU_HDR_CEILING_ENERGY_VALUE), in place; its hue kept */
+static void world_rt_energy(float rgb[3])
+{
+	float extra[3], most = MAX(rgb[0], MAX(rgb[1], rgb[2])), extra_most, share;
+	int channel;
+
+	for (channel = 0; channel < 3; channel++)
+		extra[channel] = MAX(rgb[channel], 0.0f) * WORLD_RT_ENERGY_GAIN;
+	extra_most = MAX(extra[0], MAX(extra[1], extra[2]));
+	if (!(extra_most > 0.0f))
+		return;
+	share = (WORLD_RT_ENERGY_CEILING - most) / extra_most;
+	share = share < 0.0f ? 0.0f : share > 1.0f ? 1.0f : share;
+	for (channel = 0; channel < 3; channel++)
+		rgb[channel] += extra[channel] * share;
+}
+
 /* a node's part's lamps onto the definition's: each triangle of a
 material that glows (its self-illumination colour) sampled at points
 spread over it (its base map and its multipurpose map's green, as the
@@ -1096,17 +1124,22 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 					/* (as an object of white change colours draws it, to
 					find whether it glows at all) */
 					world_rt_source_glow(material->shader, samples[count], NULL, rgb);
+					world_rt_energy(rgb);
 					for (channel = 0; channel < 3; channel++)
 						sum[channel] += powf(rgb[channel], 2.2f);
 					count++;
 					continue;
 				}
-				for (channel = 0; channel < 3 && additive; channel++)
+				if (additive)
 				{
-					float added = world_rt_lamp_texel(base, base_width, base_height, st[0], st[1], 16 - 8 * channel) *
-						colour[channel];
+					float added[3];
 
-					sum[channel] += powf(added, 2.2f);
+					for (channel = 0; channel < 3; channel++)
+						added[channel] = world_rt_lamp_texel(base, base_width, base_height, st[0], st[1],
+							16 - 8 * channel) * colour[channel];
+					world_rt_energy(added);
+					for (channel = 0; channel < 3; channel++)
+						sum[channel] += powf(added[channel], 2.2f);
 				}
 				for (channel = 0; channel < 3 && !additive; channel++)
 				{
@@ -1126,7 +1159,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 			continue;
 		}
 		for (channel = 0; channel < 3; channel++)
-			sum[channel] *= WORLD_RT_LAMP_K / (float)count;
+			sum[channel] *= (additive ? 1.0f : WORLD_RT_LAMP_K) / (float)count;
 		luminance = 0.2126f * sum[0] + 0.7152f * sum[1] + 0.0722f * sum[2];
 		if (luminance < WORLD_RT_LAMP_LEAST)
 		{
@@ -1215,11 +1248,12 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 			for (sample = 0; sample < lamp->sample_count; sample++)
 			{
 				world_rt_source_glow(lamp->shader, lamp->samples[sample], shading, rgb);
+				world_rt_energy(rgb);
 				for (channel = 0; channel < 3; channel++)
 					radiance[channel] += powf(rgb[channel], 2.2f);
 			}
 			for (channel = 0; channel < 3; channel++)
-				radiance[channel] *= WORLD_RT_LAMP_K / (float)lamp->sample_count;
+				radiance[channel] *= 1.0f / (float)lamp->sample_count;
 			if (0.2126f * radiance[0] + 0.7152f * radiance[1] + 0.0722f * radiance[2] < WORLD_RT_LAMP_LEAST)
 			{
 				world_rt_staged_counts[1]++;

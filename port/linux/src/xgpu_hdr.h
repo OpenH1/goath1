@@ -246,12 +246,30 @@ enum
 	XGPU_HDR_CEILING_HUD,
 	XGPU_HDR_CEILING_LIGHT,
 	XGPU_HDR_CEILING_NUMERIC,
+	XGPU_HDR_CEILING_ENERGY,
 };
 #define XGPU_HDR_CEILING_PAPER_WHITE_VALUE 1.0f
 #define XGPU_HDR_CEILING_WEAPON_VALUE 1.277043f
 #define XGPU_HDR_CEILING_HUD_VALUE 1.194177f
 #define XGPU_HDR_CEILING_LIGHT_VALUE 1.612451f
 #define XGPU_HDR_CEILING_NUMERIC_VALUE 1.490471f
+/* the energy glows' (XGPU_HDR_ENERGY_LEVEL): the enhanced lights' white,
+8 times paper white's light (XGPU_HDR_LIGHTS_WHITE_VALUE) */
+#define XGPU_HDR_CEILING_ENERGY_VALUE 2.573330f
+
+/* the energy glows in the camera's mode (display.ray_traced_lighting,
+HALO_HDR_KIND_ENERGY drawn adding): an emitter's gain (XGPU_HDR_EMITTER)
+of this level, 1 + 7 x XGPU_HDR_BOOST_STEP = 2.75 in the frame's values
+(about 9.3 times the light: 2.75^2.2), bounded by
+XGPU_HDR_CEILING_ENERGY_VALUE: the pixel's own colour gained before the
+blend adds it, its hue and saturation kept. The level: the brightest glows'
+cores reach the ceiling and no more of a glow does: the 90th percentile of
+the brightest channel of a50's glows as drawn (the Covenant turret's energy
+0.91, the portable shields' 0.94 and 0.91) times 2.75 is the ceiling
+(about a tenth of their pixels at it). The ray-traced lighting's object
+lamps of these glows (port/linux/game/world_rt.c's world_rt_energy) emit the
+same gained colour, so what is seen of a glow is the light it casts */
+#define XGPU_HDR_ENERGY_LEVEL 7
 
 /* a glow's expansion: from this brightest channel of the blended pixel
 (the frame's values) up, smoothly to the ceiling at 1; the light of the
@@ -488,6 +506,7 @@ static inline float xgpu_hdr_sdr_light(float value, int curve)
 static inline float xgpu_hdr_ceiling_value(int ceiling)
 {
 	return ceiling == XGPU_HDR_CEILING_WEAPON ? XGPU_HDR_CEILING_WEAPON_VALUE :
+		ceiling == XGPU_HDR_CEILING_ENERGY ? XGPU_HDR_CEILING_ENERGY_VALUE :
 		ceiling == XGPU_HDR_CEILING_HUD ? XGPU_HDR_CEILING_HUD_VALUE :
 		ceiling == XGPU_HDR_CEILING_LIGHT ? XGPU_HDR_CEILING_LIGHT_VALUE :
 		ceiling == XGPU_HDR_CEILING_NUMERIC ? XGPU_HDR_CEILING_NUMERIC_VALUE : XGPU_HDR_CEILING_PAPER_WHITE_VALUE;
@@ -1025,6 +1044,11 @@ particle, a glow, a sun's lens flare and its glow; ... the first-person
 weapon's (its effects: a muzzle flash), toward the weapon's ceiling */
 #define HALO_HDR_KIND_EMITTER 128
 #define HALO_HDR_KIND_EMITTER_FIRST_PERSON (1 << 16)
+/* an object's energy glow: a generic or chicago shader the map gives no
+radiosity power, on an object, not the first-person view's nor the sky's
+(a Covenant turret's energy, a portable shield, a powerup); drawn adding,
+it is gained in the camera's mode (XGPU_HDR_ENERGY_LEVEL) */
+#define HALO_HDR_KIND_ENERGY (1 << 17)
 #endif
 
 /* ---------- the display, as the menus and the log show it (xgpu_hdr.c) */

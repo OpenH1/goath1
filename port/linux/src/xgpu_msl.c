@@ -1704,6 +1704,7 @@ static void hdr_output(struct xgpu_text *text, unsigned short hdr)
 				"max(max(boost_extra.r, max(boost_extra.g, boost_extra.b)), 1.0e-6), 0.0, 1.0);\n"
 				"\t}\n", XGPU_HDR_BOOST_STEP * (float)XGPU_HDR_BOOST_OF(hdr),
 				XGPU_HDR_EMITTER_BOUND(hdr) == XGPU_HDR_CEILING_WEAPON ? XGPU_HDR_CEILING_WEAPON_VALUE :
+				XGPU_HDR_EMITTER_BOUND(hdr) == XGPU_HDR_CEILING_ENERGY ? XGPU_HDR_CEILING_ENERGY_VALUE :
 				XGPU_HDR_CEILING_LIGHT_VALUE);
 		xgpu_text_append(text, "\toutput.color = source;\n");
 		return;

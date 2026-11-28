@@ -1162,6 +1162,16 @@ static int transparent_hdr_kind(
 	{
 		kind |= HALO_HDR_KIND_LIGHT;
 	}
+	/* (an object's energy glow: a generic or chicago shader the map gives
+	no light, on an object, not the first-person view's nor the sky's: the
+	camera's mode gains it when it is drawn adding, xgpu_hdr.h's
+	HALO_HDR_KIND_ENERGY) */
+	else if (!TEST_FLAG(group->geometry_flags, _rasterizer_geometry_first_person_bit) &&
+		!TEST_FLAG(group->geometry_flags, _rasterizer_geometry_sky_bit) && group->object_index != NONE &&
+		(type == _shader_type_transparent_generic || type == _shader_type_transparent_chicago))
+	{
+		kind |= HALO_HDR_KIND_ENERGY;
+	}
 	/* (sprites that are light: display.hdr_highlight_boost's emitters, the
 	first-person weapon's toward its own ceiling) */
 	if (TEST_FLAG(group->geometry_flags, _rasterizer_geometry_emitter_bit))

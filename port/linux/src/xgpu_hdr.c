@@ -195,10 +195,16 @@ unsigned short xgpu_hdr_classify(const struct xgpu_hdr_draw *draw)
 	white is its own, a ceiling or the alpha limit first) */
 	else if ((draw->kind & HALO_HDR_KIND_SELF_ILLUMINATION) && colour && !draw->interface)
 		hdr = XGPU_HDR_SELF_ILLUMINATION(draw->kind >> 8);
+	/* (the camera's mode: an object's energy glow drawn adding, gained as
+	an emitter's by XGPU_HDR_ENERGY_LEVEL toward the energy's ceiling, its
+	light the ray-traced lighting's object lamps cast) */
+	if (draw->mode == XGPU_HDR_MODE_CAMERA && (draw->kind & HALO_HDR_KIND_ENERGY) && !hdr && additive && colour &&
+		!draw->interface)
+		hdr = XGPU_HDR_EMITTER(XGPU_HDR_ENERGY_LEVEL, XGPU_HDR_CEILING_ENERGY);
 	/* (display.hdr_highlight_boost, #1123: a self-illuminated surface's
 	pass, and an emitter's additive draw the fixed function blends, gained
 	by its level; none of the HUD's or the menus') */
-	if (draw->boost > 0 && colour && !draw->interface)
+	else if (draw->boost > 0 && colour && !draw->interface)
 	{
 		int level = draw->boost < XGPU_HDR_BOOST_MOST ? draw->boost : XGPU_HDR_BOOST_MOST;
 
