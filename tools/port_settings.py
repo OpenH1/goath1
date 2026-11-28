@@ -784,6 +784,9 @@ FRAME_RATE = ("video_settings/frame_rate", "frame_rate_screen")
 # developers' timings and logs and the benchmark, their own page as Frame
 # Rate's is full)
 PERFORMANCE_TOOLS = ("video_settings/frame_rate/performance_tools", "performance_tools_screen")
+# (Frame Rate & Sync's EXPERIMENTAL: the features still in progress, off by
+# default (display.ray_traced_lighting); shown where one of them can be)
+EXPERIMENTAL = ("video_settings/frame_rate/experimental", "experimental_screen")
 # (display.gamma, and display.hdr's settings and the display's peak on the
 # renderers that draw it)
 BRIGHTNESS_PAGE = ("video_settings/brightness", "brightness_screen")
@@ -1572,10 +1575,20 @@ PAGES = {
              "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
              "draws them as the Xbox did.",
              "desktop android"),
-            # (display.ray_traced_lighting: the light-transport pass, still in
-            # progress, off by default; where the graphics card has ray
-            # queries alone, SETTINGS_ROW_WHEN: port/linux/game/lt_lights.h)
-            (SECTION, "EXPERIMENTAL"),
+            # (the features still in progress, their own page, EXPERIMENTAL;
+            # shown while one of them can be: SETTINGS_ROW_WHEN)
+            ("EXPERIMENTAL ›", None, _page_screen(*EXPERIMENTAL),
+             "Features still in progress, off by default: expect visual bugs and a lower frame rate.",
+             "desktop android"),
+        ],
+    },
+    EXPERIMENTAL[0]: {
+        "screen": EXPERIMENTAL[1], "title": "EXPERIMENTAL",
+        "rows": [
+            (SECTION, "STILL IN PROGRESS"),
+            # (display.ray_traced_lighting: the light-transport pass, off by
+            # default; where the graphics card has ray queries alone,
+            # SETTINGS_ROW_WHEN: port/linux/game/lt_lights.h)
             ("RAY-TRACED LIGHTING", "display.ray_traced_lighting", ON_OFF,
              "Experimental: lighting traced from the level's own lights, the flashlight and the sun. Still in "
              "progress: expect visual bugs and a lower frame rate.",
@@ -2926,7 +2939,7 @@ SETTINGS_ROW_WHEN = {
     "dlss_addon": "dlss_addon_installed+!vr",
     "temporal_aa_sharpness": "temporal_upscale+!vr temporal_metalfx+!vr",
     # (the renderer has ray queries: settings_condition_term's ray_queries)
-    "shadows": "ray_queries", "ray_traced_lighting": "ray_queries",
+    "shadows": "ray_queries", "ray_traced_lighting": "ray_queries", "experimental": "ray_queries",
     # (the renderer draws display.contact_shadows: settings_condition_term's contact_drawn)
     "contact_shadows": "contact_drawn+!vr",
     # (the Mac's display paces its frames already)
