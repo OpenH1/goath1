@@ -205,20 +205,29 @@ void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides)
 
 int xgpu_vulkan_lt_mode(void)
 {
-	if (lt.mode < 0)
+	/* (-1 not read; -2 not given: the stream's, the game's light lists) */
+	if (lt.mode == -1)
 	{
 		const char *given = getenv("HALO_LT_E1");
 
-		lt.mode = XGPU_VULKAN_LT_OFF;
-		if (given && *given && strcmp(given, "off") && strcmp(given, "0") && strcmp(given, "false"))
-			lt.mode = !strcmp(given, "raw") ? XGPU_VULKAN_LT_RAW : !strcmp(given, "accumulate") ?
-				XGPU_VULKAN_LT_ACCUMULATE : !strcmp(given, "denoise") ? XGPU_VULKAN_LT_DENOISE : XGPU_VULKAN_LT_E2;
-		if (lt.mode)
-			host_logf(HOST_LOG_INFO, "vulkan: light transport E1: \"%s\" (the flashlight's direct light traced, %s)",
-				given, lt.mode == XGPU_VULKAN_LT_RAW ? "1 spp, no history" : lt.mode == XGPU_VULKAN_LT_DENOISE ?
-				"1 spp, through the denoiser (xgpu_vulkan_denoise.c)" : lt.mode == XGPU_VULKAN_LT_E2 ?
-				"1 spp, counted up to 64 frames" : "counted up to 2^20 frames");
+		lt.mode = -2;
+		if (given && *given)
+		{
+			lt.mode = XGPU_VULKAN_LT_OFF;
+			if (strcmp(given, "off") && strcmp(given, "0") && strcmp(given, "false"))
+				lt.mode = !strcmp(given, "raw") ? XGPU_VULKAN_LT_RAW : !strcmp(given, "accumulate") ?
+					XGPU_VULKAN_LT_ACCUMULATE : !strcmp(given, "denoise") ? XGPU_VULKAN_LT_DENOISE : XGPU_VULKAN_LT_E2;
+			if (lt.mode)
+				host_logf(HOST_LOG_INFO, "vulkan: light transport E1: \"%s\" (the flashlight's direct light traced, %s)",
+					given, lt.mode == XGPU_VULKAN_LT_RAW ? "1 spp, no history" : lt.mode == XGPU_VULKAN_LT_DENOISE ?
+					"1 spp, through the denoiser (xgpu_vulkan_denoise.c)" : lt.mode == XGPU_VULKAN_LT_E2 ?
+					"1 spp, counted up to 64 frames" : "counted up to 2^20 frames");
+		}
 	}
+	/* (not given: display.ray_traced_lighting's, as the game's light lists
+	say, the shipping configuration: the denoised pass) */
+	if (lt.mode == -2)
+		return xgpu_vulkan_lt_lights_on() ? XGPU_VULKAN_LT_DENOISE : XGPU_VULKAN_LT_OFF;
 	return lt.mode;
 }
 

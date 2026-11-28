@@ -15,8 +15,9 @@ index, so that a switch back to one makes nothing again: a10's start goes
 are let go of when the map unloads. HALO_WORLD_AO_COUNTS logs, every 600
 frames, the instances a frame and the meshes made.
 
-By default (debug.rt_render_geometry "auto", docs/rt-plan/1-geometry.md;
-"on" whatever the budget, "off" never) the scene is traced as drawn, and the
+With the ray-traced lighting (debug.rt_render_geometry "auto", the default,
+and display.ray_traced_lighting; docs/rt-plan/1-geometry.md; "on" whatever
+the budget and the lighting, "off" never) the scene is traced as drawn, and the
 collision meshes are the fallback alone: until a render mesh is made, and
 past the GPU's budget (halo_world_rt_budget: the render meshes' and the
 posed skinned objects' bytes, estimated at WORLD_RT_TRIANGLE_BYTES a
@@ -36,6 +37,9 @@ as it changes, halo_world_rt_textures).
 #include "world_ao.h"
 #include "world_proxies_source.h"
 #include "world_rt.h"
+
+/* (port/linux/game/lt_lights.c: the ray-traced lighting on) */
+int lt_lights_pass_on(void);
 
 #include <math.h>
 #include <stdio.h>
@@ -384,13 +388,15 @@ static int world_rt_room(long count)
 	return 1;
 }
 
-/* debug.rt_render_geometry: as drawn unless "off" (an older true or
-false is read as on or off: port_config.c); "auto" within the budget */
+/* debug.rt_render_geometry: as drawn where "on", and where "auto" with the
+ray-traced lighting (display.ray_traced_lighting: lt_lights.h), within the
+budget; else (an older true or false is read as on or off: port_config.c)
+the collision geometry, as before it */
 static void world_rt_render_mode(void)
 {
 	const char *mode = config_string("debug.rt_render_geometry");
 
-	world_rt.render_geometry = strcmp(mode, "off") != 0;
+	world_rt.render_geometry = !strcmp(mode, "on") || (!strcmp(mode, "auto") && lt_lights_pass_on());
 	world_rt.budgeted = world_rt.render_geometry && strcmp(mode, "on") != 0;
 	if (!world_rt.budget)
 	{

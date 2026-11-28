@@ -138,4 +138,13 @@ HALO_LT_E1): the frame before's registers are then kept for the pre-pass's
 twins' motion too (motion_vectors.c) */
 boolean lt_lights_sent(void);
 
+/* whether the ray-traced lighting (the light-transport pass) is on:
+display.ray_traced_lighting where the GPU has ray queries and the dynamic
+lights are enhanced; HALO_LT_E1, where given, overrides it (debug). Off,
+nothing of the pass or of the light model it brings runs: the dynamic
+lights, the flashlight and the surfaces are master's */
+int lt_lights_pass_on(void);
+/* each frame: the backend told when the pass is turned off */
+void lt_lights_update(void);
+
 #endif

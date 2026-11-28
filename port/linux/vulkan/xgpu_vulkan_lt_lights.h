@@ -21,5 +21,8 @@ const struct xgpu_stream_lt_light *xgpu_vulkan_lt_lights(int window, int *count,
 /* the window whose list came last (-1: none yet): the one the pre-pass
 after it draws */
 int xgpu_vulkan_lt_lights_window(void);
+/* whether the game has the light-transport pass on (display.ray_traced_lighting):
+a list received since its last window -1 (the pass turned off) */
+int xgpu_vulkan_lt_lights_on(void);
 
 #endif

@@ -239,6 +239,11 @@ struct xgpu_manifest_settings
 {
 	int samples, hdr, per_pixel_lighting, enhanced_lights, ambient_occlusion, deep, soft, boost, alpha_drop;
 	int smooth_lightmaps;
+	/* the ray-traced lighting's light model (display.ray_traced_lighting:
+	port/linux/game/lt_lights.h): a model the enhanced lights reach lit for
+	each pixel without display.per_pixel_lighting (XGPU_PER_PIXEL_VERTEX_AMBIENT);
+	0, as xgpu_manifest_settings gives it, as before */
+	int light_model;
 };
 
 /* display.ambient_occlusion: off, or found in the world ("world"; without

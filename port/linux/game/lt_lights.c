@@ -194,27 +194,69 @@ static struct
 
 /* ---------- the list */
 
+int config_boolean(const char *name);
+int halo_world_ao_ray_queries(void);
+
+/* an environment switch's value: -1 not given, else on (1) or off (0) */
+static int lt_switch(char const *name)
+{
+	char const *given = getenv(name);
+
+	if (!given || !*given)
+		return -1;
+	return strcmp(given, "off") && strcmp(given, "0") && strcmp(given, "false");
+}
+
+int lt_lights_pass_on(void)
+{
+	static int pass = -2;
+
+	if (pass == -2)
+		pass = lt_switch("HALO_LT_E1");
+	if (pass >= 0)
+		return pass;
+	return config_boolean("display.ray_traced_lighting") && halo_world_ao_ray_queries() &&
+		halo_dynamic_lights_enhanced();
+}
+
+/* whether the list is built and sent: HALO_LT_LIGHTS (or HALO_LT_LIGHTS_DUMP)
+where given, else the pass on (lt_lights_pass_on) */
 static int lt_lights_wanted(void)
 {
 	if (lt.wanted < 0)
 	{
-		char const *given = getenv("HALO_LT_LIGHTS");
-		char const *pass = getenv("HALO_LT_E1");
 		char const *dump = getenv("HALO_LT_LIGHTS_DUMP");
 
-		lt.wanted = pass && *pass && strcmp(pass, "off") && strcmp(pass, "0") && strcmp(pass, "false");
-		if (given && *given)
-			lt.wanted = strcmp(given, "0") && strcmp(given, "off") && strcmp(given, "false");
+		lt.wanted = lt_switch("HALO_LT_LIGHTS") >= 0 ? 2 + lt_switch("HALO_LT_LIGHTS") : 0;
 		if (dump && *dump)
 		{
 			snprintf(lt.dump_path, sizeof(lt.dump_path), "%s/lt_lights.jsonl", dump);
-			lt.wanted = 1;
+			lt.wanted = 3;
 		}
-		if (lt.wanted)
-			platform_log("lt lights: the light list sent each frame%s%s", lt.dump_path[0] ? ", dumped to " : "",
-				lt.dump_path);
 	}
-	return lt.wanted;
+	return lt.wanted ? lt.wanted == 3 : lt_lights_pass_on();
+}
+
+/* the backend told when the pass is turned off (a list with window -1:
+xgpu_vulkan_lt_lights.c), once, after lists were sent */
+static void lt_lights_announce(int sending)
+{
+	static int sent = 0;
+
+	if (sending && !sent)
+		platform_log("lt lights: the light list sent each frame%s%s (the light-transport pass on)",
+			lt.dump_path[0] ? ", dumped to " : "", lt.dump_path);
+	if (!sending && sent)
+	{
+		platform_log("lt lights: the light-transport pass off");
+		xgpu_backend_lt_lights(NULL, 0, -1, lt.frame);
+	}
+	sent = sending;
+}
+
+void lt_lights_update(void)
+{
+	lt_lights_announce(lt_lights_wanted());
 }
 
 boolean lt_lights_sent(void)
@@ -573,6 +615,7 @@ void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long
 {
 	int written, window = render.window_index;
 
+	lt_lights_announce(lt_lights_wanted());
 	if (!lt_lights_wanted())
 		return;
 	written = lt_build(lights, keys, objects, owners, baked, game_count, count);
@@ -614,12 +657,11 @@ boolean lt_lights_sun_shadow(long object_index)
 
 	if (pass_sun < 0)
 	{
-		char const *pass = getenv("HALO_LT_E1"), *given = getenv("HALO_LT_SUN");
+		char const *given = getenv("HALO_LT_SUN");
 
-		pass_sun = pass && *pass && strcmp(pass, "off") && strcmp(pass, "0") && strcmp(pass, "false") &&
-			!(given && !strcmp(given, "0"));
+		pass_sun = !(given && !strcmp(given, "0"));
 	}
-	if (!pass_sun || object_index == NONE)
+	if (!pass_sun || object_index == NONE || !lt_lights_pass_on())
 		return FALSE;
 	/* (only an object the ray-traced scene holds with a shape of its own,
 	which the pass's sun rays meet at any height (lt/e1.frag's sun_share):

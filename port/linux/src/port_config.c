@@ -538,13 +538,21 @@ static const struct config_setting config_settings[] =
 		_environment_value, _platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"
 		"on the Xbox, or 256, 512 or 1024 for smoother edges, as soft." GRAPHICS_CHOOSES },
-	{ "display.ray_tracing", _config_string, "\"auto\"", "HALO_RAY_TRACING", _environment_value, _platform_all,
-		"Ray tracing together: \"auto\", \"on\" or \"off\". On, display.shadows and\n"
-		"display.ambient_occlusion are \"ray_traced\", and display.rt_reflections\n"
-		"and display.rt_bounce on, each set here winning over it; off, they are\n"
-		"as before. \"auto\" is on where the GPU and its Vulkan driver have ray\n"
-		"queries and display.graphics is \"enhanced\", off elsewhere (Metal,\n"
-		"Android, older GPUs, the VR mode)." },
+	{ "display.ray_tracing", _config_string, "\"off\"", "HALO_RAY_TRACING", _environment_value, _platform_all,
+		"Ray tracing together (work in progress, off by default): \"auto\", \"on\"\n"
+		"or \"off\". On, display.shadows and display.ambient_occlusion are\n"
+		"\"ray_traced\", and display.rt_reflections and display.rt_bounce on, each\n"
+		"set here winning over it; off, they are as before. \"auto\" is on where\n"
+		"the GPU and its Vulkan driver have ray queries and display.graphics is\n"
+		"\"enhanced\", off elsewhere (Metal, Android, older GPUs, the VR mode)." },
+	{ "display.ray_traced_lighting", _config_boolean, "false", "HALO_RAY_TRACED_LIGHTING", _environment_value,
+		_platform_all,
+		"Experimental: the level's lights, the flashlight and the sun traced on\n"
+		"the GPU (one light-transport pass through a denoiser), with the enhanced\n"
+		"dynamic lights' newer light model. Still in progress: expect visual bugs\n"
+		"and a lower frame rate. Vulkan where the GPU has ray queries, with\n"
+		"display.dynamic_lights \"enhanced\"; off elsewhere. Off, nothing of it\n"
+		"runs (port/linux/game/lt_lights.h)." },
 	{ "display.shadows", _config_string, "\"classic\"", "HALO_SHADOWS", _environment_value, _platform_all,
 		"The objects' shadows on the level: \"classic\" as the game draws them\n"
 		"(each drawn into a map, blurred and laid over the ground under it), or\n"
@@ -3534,10 +3542,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.rt_render_geometry", _config_string, "\"auto\"", "HALO_RT_RENDER_GEOMETRY", _environment_value,
 		_platform_all,
 		"With display.ambient_occlusion or display.shadows \"ray_traced\", what\n"
-		"the rays hit: \"auto\" the level and objects as they are drawn (their\n"
-		"render triangles, cutouts tested by their alpha), their collision\n"
-		"geometry only until the render mesh is made or past this GPU's memory\n"
-		"budget; \"on\" as drawn whatever the budget; \"off\" the collision\n"
+		"the rays hit: \"auto\", with display.ray_traced_lighting, the level and\n"
+		"objects as they are drawn (their render triangles, cutouts tested by\n"
+		"their alpha), their collision geometry only until the render mesh is\n"
+		"made or past this GPU's memory budget, and without it the collision\n"
+		"geometry; \"on\" as drawn whatever the budget; \"off\" the collision\n"
 		"geometry alone (docs/rt-plan/1-geometry.md)." },
 	{ "debug.world_scene_dump", _config_boolean, "false", "HALO_WORLD_SCENE_DUMP", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", write each level BSP's\n"
@@ -5438,7 +5447,7 @@ static const struct
 	{ "display.temporal_aa", { "off", "fsr", "dlss", "metalfx", NULL }, "off" },
 	{ "display.shadows", { "classic", "ray_traced", NULL }, "classic" },
 	{ "debug.rt_render_geometry", { "auto", "on", "off", NULL }, "auto" },
-	{ "display.ray_tracing", { "auto", "on", "off", NULL }, "auto" },
+	{ "display.ray_tracing", { "auto", "on", "off", NULL }, "off" },
 	{ "display.astc_textures", { "auto", "always", "off", NULL }, NULL },
 	{ "display.picture_position", { "center", "top", "bottom", NULL }, NULL },
 	{ "display.orientation", { "landscape", "portrait", "auto", NULL }, NULL },

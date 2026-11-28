@@ -204,7 +204,9 @@ struct variant
 {
 	uint16_t integer_attributes;
 	uint8_t border[4];
-	uint8_t foveated, pad;
+	/* (light_transport: the light-transport pass on, xgpu_vulkan_lt_mode:
+	the shaders made again as it is turned on or off) */
+	uint8_t foveated, light_transport;
 };
 
 /* the most world pipelines waiting for their shaders, and the most made a
@@ -1768,6 +1770,8 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	options.subgroups = stream.capabilities.subgroups;
 	/* (display.temporal_aa: a window's objects' variant, its motion too) */
 	options.motion = motion.making != 0 || prepass.motion_making;
+	/* (the light-transport pass: its surfaces and twins, its light model) */
+	options.light_transport = variant->light_transport;
 	/* (display.rt_reflections: rt_reflection_of) */
 	entry->rt_reflection = rt_reflection_of(key, lighting, &options.world_position_input);
 	program = malloc(sizeof(*program));
@@ -1834,6 +1838,7 @@ static void variant_current(const struct xgpu_stream_pipeline_key *key, struct v
 	variant->foveated = host_vulkan_vr_foveated() != 0;
 #endif
 	variant->integer_attributes = key->immediate ? 0 : stream.integer_attributes;
+	variant->light_transport = xgpu_vulkan_lt_mode() != 0;
 	memcpy(variant->border, stream.border, sizeof(variant->border));
 }
 
@@ -2092,14 +2097,17 @@ static int uniforms_update(const struct stream_pipeline *entry)
 		to->world_ao[1] = from->world_ao[1];
 		to->world_ao[2] = from->world_ao[2];
 		to->world_ao[3] = from->world_ao[3];
-		/* (the enhanced dynamic lights' tint, gamma, as the gel pass multiplies it: worked out
-		again where the colour changed) */
-		if (!stream.tint_valid || memcmp(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from)))
+		/* (the enhanced dynamic lights' tint: in linear light, or, with the
+		ray-traced lighting's light model (xgpu_vulkan_lt_mode), gamma, as
+		the gel pass multiplies it; worked out again where the colour or the
+		model changed) */
+		if (!stream.tint_valid || stream.tint_valid != 1 + (xgpu_vulkan_lt_mode() != 0) ||
+			memcmp(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from)))
 		{
 			for (stage = 0; stage < 3; stage++)
-				stream.tint[stage] = from->ps_final_c0[stage];
+				stream.tint[stage] = xgpu_vulkan_lt_mode() ? from->ps_final_c0[stage] : powf(from->ps_final_c0[stage], 2.2f);
 			memcpy(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from));
-			stream.tint_valid = 1;
+			stream.tint_valid = 1 + (xgpu_vulkan_lt_mode() != 0);
 		}
 		memcpy(to->dynamic_light_tint, stream.tint, 3 * sizeof(to->dynamic_light_tint[0]));
 		to->dynamic_light_tint[3] = 1.0f;

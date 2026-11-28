@@ -205,6 +205,8 @@ real dynamic_lights_share(short count);
 void dynamic_lights_copy(long rasterizer_light_index, short number, real_point3d const *position,
 	real_vector3d const *axis);
 boolean dynamic_lights_flashlight_gel(long gel_bitmap_group_index);
+void lt_lights_update(void);
+int lt_lights_pass_on(void);
 /* port: port/linux/game/door_portals.c (closed doors shut their portals to
 the lights) */
 void door_portals_update(void);
@@ -1886,6 +1888,8 @@ void lights_preprocess_scene(
 	/* port: the frame's lights to the renderer (display.dynamic_lights) */
 	if (halo_dynamic_lights_enhanced())
 		dynamic_lights_submit();
+	else
+		lt_lights_update(); /* port: port/linux/game/lt_lights.c */
 	/* port: the rt2 truth scene's lights test (HALO_RT2_LIGHTS_TEST) */
 	rt_lights_materials_debug_frame();
 	profile_exit(lights_section);
@@ -2435,7 +2439,7 @@ with its shadow */
 static boolean light_port_lights_structure(
 	struct point_light_definition const *definition)
 {
-	if (TEST_FLAG(definition->flags, _light_definition_is_first_person_flashlight_bit))
+	if (TEST_FLAG(definition->flags, _light_definition_is_first_person_flashlight_bit) && lt_lights_pass_on())
 		return dynamic_lights_flashlight_gel(definition->gel_map.index);
 	return definition->cutoff_angle >= _pi / 2
 		&& definition->gel_map.index == NONE

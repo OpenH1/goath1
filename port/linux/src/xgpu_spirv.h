@@ -266,6 +266,11 @@ struct xgpu_spirv_options
 	program run again on the previous frame's registers, which the
 	constants' block holds after the 192 (384 vec4s then); not with views */
 	BOOL motion;
+	/* the light-transport pass on (display.ray_traced_lighting, or HALO_LT_E1:
+	port/linux/vulkan/xgpu_vulkan_lt.h): the surfaces add its light, the
+	pre-pass's twins write its guides, and the enhanced dynamic lights take
+	its light model (xgpu.h); off, all as before it */
+	BOOL light_transport;
 	/* display.rt_reflections: the vertex shader hands its position (input
 	0, the level's vertices being in the world) on as the world position
 	(XGPU_SPIRV_LOCATION_WORLD_POSITION), where its lighting does not

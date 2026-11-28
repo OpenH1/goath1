@@ -1249,9 +1249,14 @@ void rasterizer_set_model_lighting(
 			long own_light = RENDER_LIGHTING_OWN_LIGHT(lighting, slot);
 
 			own_lights[slot] = -1.0f;
-			/* (a light this frame: the list is the lighting's, made with
-			its pads cleared, object_lights.c's lights_port_own_light) */
-			if (own_light != NONE && own_light >= 0 && own_light < rasterizer_lights.light_count)
+			/* (a light this frame: with the ray-traced lighting's light
+			model (port/linux/game/lt_lights.h) the list is the lighting's,
+			made with its pads cleared, object_lights.c's
+			lights_port_own_light; else one which says so, not what a
+			lighting made elsewhere left in the pads) */
+			if (own_light != NONE && own_light >= 0 && own_light < rasterizer_lights.light_count &&
+				(lt_lights_pass_on() ||
+				TEST_FLAG(rasterizer_lights.lights[own_light].definition->flags, 2 /* dont light own object */)))
 			{
 				own_lights[slot] = (real)own_light;
 			}

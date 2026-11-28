@@ -909,7 +909,7 @@ int xgpu_manifest_derive(const struct xgpu_manifest_draw *draw, const struct xgp
 	enhanced lights light each pixel whatever display.per_pixel_lighting
 	says) */
 	facts.per_pixel = settings->per_pixel_lighting || settings->enhanced_lights;
-	facts.per_pixel_setting = settings->per_pixel_lighting;
+	facts.per_pixel_setting = settings->per_pixel_lighting || !settings->light_model;
 	facts.lights_active = settings->enhanced_lights && context->lights_present;
 	facts.environment = context->environment;
 	facts.sample_mask = 1;

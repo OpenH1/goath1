@@ -51,6 +51,9 @@ the game simulates, nothing sent between machines.
 #include "items/weapon_definitions.h"
 #include "light_sources.h"
 
+/* (port/linux/game/lt_lights.c: the ray-traced lighting on) */
+int lt_lights_pass_on(void);
+
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,6 +130,9 @@ struct light_source_object
 	(xgpu.h), a Lambertian disk as large, its radiance its color */
 	real_vector3d facing;
 	real area;
+	/* (its radius in the classic light model, without the ray-traced
+	lighting's (lt_lights.h): 0 the same) */
+	real classic_radius;
 };
 
 /* an effect's light: its time a flash's, seconds */
@@ -175,7 +181,8 @@ static struct light_source_object const light_source_objects[] =
 	panel: its light a^2 / (a^2 + d^2) of its own at d (a disk's of its
 	area, a = 0.0074), a hundredth by 0.08 */
 	{ 'weap', "weapons\\assault rifle\\assault rifle", "primary trigger", _light_source_magazine, NONE,
-		{ 0.35f, 0.80f, 1.00f }, 0.08f, { -0.16f, 0.00f, 0.03f }, { -1.00f, 0.00f, 0.00f }, 0.009f * 0.019f },
+		{ 0.35f, 0.80f, 1.00f }, 0.08f, { -0.16f, 0.00f, 0.03f }, { -1.00f, 0.00f, 0.00f }, 0.009f * 0.019f,
+		0.05f },
 	/* a flamethrower's fire, as a fire's */
 	{ 'proj', "weapons\\flamethrower\\flame", NULL, _light_source_stream, NONE, { 1.00f, 0.60f, 0.25f }, 4.0f },
 };
@@ -353,6 +360,32 @@ static boolean light_sources_display(
 	struct light_source_object const *entry)
 {
 	return entry->facing.i != 0.0f || entry->facing.j != 0.0f || entry->facing.k != 0.0f;
+}
+
+/* the classic light model's falloff of a light of radius r (without the
+ray-traced lighting's, lt_lights.h), which the enhanced dynamic lights add
+in linear light (xgpu_spirv.c's dynamic_light_sum_classic, the look's
+default brightness in d3d8_device.c's dynamic_lights_read_settings): its
+color^2.2 times BRIGHTNESS times (1 - (d/r)^4)^2 / (1 + 12 (d/r)^2) */
+#define LIGHT_SOURCES_RENDER_BRIGHTNESS 1.7f
+
+/* (classic) a lit display's strength, a scale of its color (the display's
+own, as drawn): a surface at a lit panel's face sees the panel's own
+brightness (a Lambertian emitter of radiance L lights what touches it by pi
+L, which reflects albedo times L), so the light's peak, at its middle, is
+the display's color: its color^2.2 times BRIGHTNESS there is the color^2.2.
+As its color, in gamma (the game's lights' 0 to 1, which the renderer takes
+to the power 2.2) */
+static real light_sources_display_strength(void)
+{
+	return powf(1.0f / LIGHT_SOURCES_RENDER_BRIGHTNESS, 1.0f / 2.2f);
+}
+
+/* an object light's radius: the classic light model's where it has one of
+its own, without the ray-traced lighting (lt_lights.h) */
+static real light_sources_object_radius(struct light_source_object const *entry)
+{
+	return entry->classic_radius > 0.0f && !lt_lights_pass_on() ? entry->classic_radius : entry->radius;
 }
 
 /* HALO_PANEL_LIGHTS_OFF=1 (the lighting referee's daylight control): the lit
@@ -657,6 +690,9 @@ static void light_sources_objects(
 				strength = light_sources_held_strength(iterator.index, object);
 			else if (held)
 				continue;
+			/* (classic, without the ray-traced lighting: lt_lights.h) */
+			if (light_sources_display(entry) && !lt_lights_pass_on())
+				strength *= light_sources_display_strength();
 			if (entry->function_index != NONE)
 				strength = render_interpolation_object_function_values(iterator.index)[entry->function_index];
 			if (entry->kind == _light_source_burn)
@@ -707,7 +743,7 @@ static void light_sources_objects(
 					weapon is drawn, its marker not found there) */
 					if (held && !first_person)
 						dynamic_lights_first_person(iterator.index, &position);
-					source = light_sources_add(&position, entry->radius, &entry->color,
+					source = light_sources_add(&position, light_sources_object_radius(entry), &entry->color,
 						strength * dynamic_lights_share(count), FALSE, LIGHT_SOURCES_KEY(2, iterator.index, row, index));
 					/* (a display's face, as its marker turns) */
 					if (source && light_sources_display(entry))
@@ -740,7 +776,8 @@ static void light_sources_objects(
 			position.y += entry->offset.k * object->object.up.j;
 			position.z += entry->offset.k * object->object.up.k;
 			{
-				struct light_source *source = light_sources_add(&position, entry->radius, &entry->color, strength,
+				struct light_source *source = light_sources_add(&position, light_sources_object_radius(entry),
+					&entry->color, strength,
 					object->object.type == _object_type_projectile &&
 						object_definition_get(object->definition_index)->object.model.index == NONE,
 					LIGHT_SOURCES_KEY(2, iterator.index, row, 0));

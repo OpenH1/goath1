@@ -26,7 +26,8 @@
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_dynamic_resolution" x="28" y="303"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_14" x="28" y="334"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_shadows" x="28" y="356"/>
-		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_contact_shadows" x="28" y="381"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_16" x="28" y="387"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_ray_traced_lighting" x="28" y="409"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/button_bar" x="0" y="448"/>
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/button_bar" role="buttons" type="column_list" box="0 0 640 28" place="foot">
@@ -291,23 +292,29 @@
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/shadows_spinner" type="spinner" box="0 1 140 23" wide="40 120" past="60 60" header="bitmaps/arrow_sm_left" header_box="-6 6 0 18" footer="bitmaps/arrow_sm_right" footer_box="140 6 146 18">
 		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 0" items="OFF|ON" scale="1 1.2"/>
 	</look>
-	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_contact_shadows" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_16" box="0 0 344 20" wide="-106 244" past="-143 193" picture="main_menu/settings/section_tall">
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_16_title" x="0" y="0"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_16_title" type="text" box="0 0 344 20" wide="0 244" past="0 193">
+		<text font="ui\small_ui" color="#FF6F9CD0" at="2 2" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" index="16" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_ray_traced_lighting" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
 		<text color="#FF2896FF"/>
-		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_label" x="0" y="0"/>
-		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_spinner" x="188" y="0"/>
-		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_seg0" x="188" y="2"/>
-		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_seg1" x="240" y="2"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_label" x="0" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_spinner" x="188" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_seg0" x="188" y="2"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_seg1" x="240" y="2"/>
 	</look>
-	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_label" type="text" box="0 0 184 24" wide="0 40" past="0 60">
-		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" index="16" scale="1 1.2"/>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_label" type="text" box="0 0 184 24" wide="0 40" past="0 60">
+		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" index="17" scale="1 1.2"/>
 	</look>
-	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_seg0" type="text" box="0 0 48 20" wide="40 0" past="60 0" place="keep_ends" picture="main_menu/settings/segment_tall">
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_seg0" type="text" box="0 0 48 20" wide="40 0" past="60 0" place="keep_ends" picture="main_menu/settings/segment_tall">
 		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" text="ON" scale="1 1.2"/>
 	</look>
-	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_seg1" type="text" box="0 0 48 20" wide="40 0" past="60 0" place="keep_ends" picture="main_menu/settings/segment_tall">
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_seg1" type="text" box="0 0 48 20" wide="40 0" past="60 0" place="keep_ends" picture="main_menu/settings/segment_tall">
 		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" text="OFF" scale="1 1.2"/>
 	</look>
-	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/contact_shadows_spinner" type="spinner" box="0 1 140 23" wide="40 120" past="60 60" header="bitmaps/arrow_sm_left" header_box="-6 6 0 18" footer="bitmaps/arrow_sm_right" footer_box="140 6 146 18">
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/ray_traced_lighting_spinner" type="spinner" box="0 1 140 23" wide="40 120" past="60 60" header="bitmaps/arrow_sm_left" header_box="-6 6 0 18" footer="bitmaps/arrow_sm_right" footer_box="140 6 146 18">
 		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 0" items="ON|OFF" scale="1 1.2"/>
 	</look>
 </model>

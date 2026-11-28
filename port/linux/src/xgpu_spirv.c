@@ -2188,6 +2188,7 @@ static void rt_bounce_declare(struct module *m, struct pixel_state *state);
 static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light);
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
 static int lt_e1_on(void);
+static int lt_light_model(void);
 static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular,
 	unsigned int motion);
 static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in);
@@ -4728,6 +4729,222 @@ static unsigned int light_shadows_factor(struct module *m, const struct light_sh
 	return falloff;
 }
 
+/* ---------- the classic light model (display.ray_traced_lighting off:
+port/linux/game/lt_lights.h): the enhanced dynamic lights as they were
+before the ray-traced lighting's light model, unchanged */
+
+/* dynamic_light_sum(p, n, surface_normal, environment): the lights of the
+pixel's cell, summed (a model's but those its object's own that do not light
+it, its model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS]); its loops are SPIR-V's structured loops, its values
+kept in the function's variables. With a reflection (a model's, of the eye
+about its normal; 0 none), each light's highlight along it, to the exponent,
+summed into the shine variable as well (xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT;
+xgpu_msl.c's dynamic_light_sum) */
+static unsigned int dynamic_light_sum_classic(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
+	unsigned int surface_normal, BOOL environment, unsigned int reflection, unsigned int exponent,
+	unsigned int shine_variable)
+{
+	unsigned int grid0 = dynamic_light(m, 0, constant_int(m, 0)), grid1 = dynamic_light(m, 0, constant_int(m, 1));
+	unsigned int offset, cell, mask, cell_index, operands[4];
+	unsigned int sum_variable, word_variable, bits_variable;
+	unsigned int outer_header, outer_condition, outer_body, outer_continue, outer_merge;
+	unsigned int inner_header, inner_condition, inner_body, inner_continue, inner_merge;
+	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, window, core, falloff, facing;
+	unsigned int cone, color, spot, grid2, w, own = 0, tint = 0;
+	struct light_shadows_read shadows;
+
+	/* cell = sign(offset) * log2(1.0 + abs(offset) * grid[1].w) * grid[1].xyz + vec3(16.0, 16.0, 8.0) */
+	offset = fsub(m, 3, p, xyz(m, grid0));
+	cell = fadd(m, 3, fmul(m, 3, fmul(m, 3, ext1(m, GLSL_F_SIGN, m->t_v3, offset),
+		ext1(m, GLSL_LOG2, m->t_v3, fadd(m, 3, constant_splat(m, 3, 1.0f),
+		fscale(m, 3, ext1(m, GLSL_F_ABS, m->t_v3, offset), extract(m, grid1, 3))))), xyz(m, grid1)),
+		constant_vector(m, 3, (const float[]){ (float)(XGPU_DYNAMIC_LIGHTS_GRID_X / 2), (float)(XGPU_DYNAMIC_LIGHTS_GRID_Y / 2),
+		(float)(XGPU_DYNAMIC_LIGHTS_GRID_Z / 2) }));
+	cell_index = ext3(m, GLSL_S_CLAMP, m->t_iv3, op1(m, OP_CONVERT_F_TO_S, m->t_iv3, ext1(m, GLSL_FLOOR, m->t_v3, cell)),
+		op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 3, (unsigned int[]){ constant_int(m, 0), constant_int(m, 0), constant_int(m, 0) }),
+		op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 3, (unsigned int[]){ constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_X - 1),
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_Y - 1), constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_Z - 1) }));
+	mask = dynamic_light_texel(m, cell_index);
+	/* (those of the cell's lights that reach the pixel's cluster, its point
+	a little off its surface: xgpu.h) */
+	mask = dynamic_light_cluster_mask(m, state, mask, fadd(m, 3, p, fscale(m, 3, surface_normal,
+		constant_float(m, XGPU_DYNAMIC_LIGHTS_CLUSTER_OFFSET))), environment);
+	grid2 = dynamic_light(m, 0, constant_int(m, 2));
+	/* (a model's: the lights it is not lit by, xgpu.h) */
+	if (!environment)
+		own = uniform(m, U_MODEL_LIGHTS, XGPU_MODEL_LIGHT_OWN_LIGHTS);
+	light_shadows_begin(m, state, &shadows);
+
+	sum_variable = local(m, &state->locals, m->t_v3);
+	word_variable = local(m, &state->locals, m->t_int);
+	bits_variable = local(m, &state->locals, m->t_uint);
+	store(m, sum_variable, constant_splat(m, 3, 0.0f));
+	store(m, word_variable, constant_int(m, 0));
+
+	outer_header = id_new(m);
+	outer_condition = id_new(m);
+	outer_body = id_new(m);
+	outer_continue = id_new(m);
+	outer_merge = id_new(m);
+	branch(m, outer_header);
+	label_at(m, outer_header);
+	operands[0] = outer_merge;
+	operands[1] = outer_continue;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, outer_condition);
+	label_at(m, outer_condition);
+	word = load(m, m->t_int, word_variable);
+	branch_conditional(m, op2(m, OP_S_LESS_THAN, m->t_bool, word, constant_int(m, 4)), outer_body, outer_merge);
+	label_at(m, outer_body);
+	store(m, bits_variable, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, mask, word));
+
+	inner_header = id_new(m);
+	inner_condition = id_new(m);
+	inner_body = id_new(m);
+	inner_continue = id_new(m);
+	inner_merge = id_new(m);
+	branch(m, inner_header);
+	label_at(m, inner_header);
+	operands[0] = inner_merge;
+	operands[1] = inner_continue;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, inner_condition);
+	label_at(m, inner_condition);
+	bits = load(m, m->t_uint, bits_variable);
+	branch_conditional(m, op2(m, OP_I_NOT_EQUAL, m->t_bool, bits, constant_uint(m, 0)), inner_body, inner_merge);
+	label_at(m, inner_body);
+	/* light = word * 32 + findLSB(bits); bits &= bits - 1u */
+	light = op2(m, OP_I_ADD, m->t_int, op2(m, OP_I_MUL, m->t_int, word, constant_int(m, 32)),
+		ext1(m, GLSL_FIND_I_LSB, m->t_int, bits));
+	store(m, bits_variable, op2(m, OP_BITWISE_AND, m->t_uint, bits, op2(m, OP_I_SUB, m->t_uint, bits, constant_uint(m, 1))));
+	position = dynamic_light(m, 1, light);
+	w = extract(m, position, 3);
+	if (environment)
+	{
+		unsigned int skip = id_new(m), condition = compare(m, OP_F_ORD_LESS_THAN, w, constant_float(m, 0.0f));
+
+		/* if (environment && position.w < 0.0) continue; */
+		selection_merge(m, skip);
+		branch_conditional(m, condition, inner_continue, skip);
+		label_at(m, skip);
+	}
+	else
+	{
+		unsigned int skip = id_new(m), index = op1(m, OP_CONVERT_S_TO_F, m->t_float, light), condition;
+		int slot;
+
+		/* if (any(own == vec4(float(light)))) continue; */
+		condition = compare(m, OP_F_ORD_EQUAL, extract(m, own, 0), index);
+		for (slot = 1; slot < 4; slot++)
+			condition = op2(m, OP_LOGICAL_OR, m->t_bool, condition, compare(m, OP_F_ORD_EQUAL, extract(m, own, slot), index));
+		selection_merge(m, skip);
+		branch_conditional(m, condition, inner_continue, skip);
+		label_at(m, skip);
+	}
+	to_light = fsub(m, 3, xyz(m, position), p);
+	distance_squared = fdot(m, to_light, to_light);
+	x2 = fmul(m, 1, fmul(m, 1, distance_squared, w), w);
+	{
+		unsigned int skip = id_new(m), condition = compare(m, OP_F_ORD_GREATER_THAN_EQUAL, x2, constant_float(m, 1.0f));
+
+		/* if (x2 >= 1.0) continue; */
+		selection_merge(m, skip);
+		branch_conditional(m, condition, inner_continue, skip);
+		label_at(m, skip);
+	}
+	l = fscale(m, 3, to_light, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, distance_squared, (float)1.0e-8)));
+	window = fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, x2, x2));
+	core = fmax_scalar(m, 1, fmul(m, 1, fmul(m, 1, extract(m, grid2, 1), w), w),
+		(float)(1.0 / (XGPU_DYNAMIC_LIGHTS_CORE * XGPU_DYNAMIC_LIGHTS_CORE)));
+	falloff = fdiv(m, 1, fmul(m, 1, window, window), fadd(m, 1, constant_float(m, 1.0f), fmul(m, 1, distance_squared, core)));
+	falloff = light_shadows_factor(m, &shadows, light, falloff, &tint);
+	if (environment)
+	{
+		facing = fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f),
+			saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 4.0f)), constant_float(m, 0.5f))));
+	}
+	else
+	{
+		unsigned int wrap = extract(m, grid2, 3);
+
+		facing = saturate(m, 1, fdiv(m, 1, fadd(m, 1, fdot(m, n, l), wrap), fadd(m, 1, constant_float(m, 1.0f), wrap)));
+	}
+	cone = dynamic_light(m, 3, light);
+	color = dynamic_light(m, 2, light);
+	/* (HALO_LIGHT_SHADOWS_VIEW: a shadowed light in its tint) */
+	if (tint)
+		color = vec4_of(m, select_n(m, 3, compare(m, OP_F_ORD_GREATER_THAN, extract(m, tint, 3), constant_float(m, 0.5f)),
+			xyz(m, tint), xyz(m, color)), extract(m, color, 3));
+	spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)), extract(m, color, 3)));
+	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable),
+		fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot))));
+	if (reflection)
+	{
+		/* shine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent)) */
+		unsigned int lobe = ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, fdot(m, reflection, l), 0.0f), exponent);
+		unsigned int horizon = saturate(m, 1, fmul(m, 1, fdot(m, n, l), constant_float(m, 4.0f)));
+
+		store(m, shine_variable, fadd(m, 3, load(m, m->t_v3, shine_variable),
+			fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, fmul(m, 1, falloff, spot), horizon), lobe))));
+	}
+	branch(m, inner_continue);
+	label_at(m, inner_continue);
+	branch(m, inner_header);
+	label_at(m, inner_merge);
+	branch(m, outer_continue);
+	label_at(m, outer_continue);
+	store(m, word_variable, op2(m, OP_I_ADD, m->t_int, load(m, m->t_int, word_variable), constant_int(m, 1)));
+	branch(m, outer_header);
+	label_at(m, outer_merge);
+	return load(m, m->t_v3, sum_variable);
+}
+
+/* dynamic_light_add(base, light): the light added to the base under the
+shoulder, in linear space; the base as it is (saturated) where there is no
+light, as the shoulder gives it, but for its rounding there and back */
+static unsigned int dynamic_light_add_classic(struct module *m, struct pixel_state *state, unsigned int base,
+	unsigned int light, BOOL hdr)
+{
+	unsigned int grid2, brightest, had, room, gamma, lit, added, after, any_light, result_variable;
+
+	result_variable = local(m, &state->locals, m->t_v3);
+	store(m, result_variable, saturate(m, 3, base));
+	any_light = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_UNORD_NOT_EQUAL, m->t_bv3, light,
+		constant_splat(m, 3, 0.0f)));
+	added = id_new(m);
+	after = id_new(m);
+	selection_merge(m, after);
+	branch_conditional(m, any_light, added, after);
+	label_at(m, added);
+	grid2 = dynamic_light(m, 0, constant_int(m, 2));
+	brightest = ext2(m, GLSL_F_MAX, m->t_float, extract(m, light, 0), ext2(m, GLSL_F_MAX, m->t_float, extract(m, light, 1),
+		extract(m, light, 2)));
+	light = fadd(m, 3, light, splat(m, 3, fmul(m, 1, fmax_scalar(m, 1, fsub(m, 1, brightest, constant_float(m, 1.0f)), 0.0f),
+		extract(m, grid2, 2))));
+	had = ext2(m, GLSL_POW, m->t_v3, saturate(m, 3, base), constant_splat(m, 3, 2.2f));
+	room = fmax_scalar(m, 3, fsub(m, 3, constant_splat(m, 3, 1.0f), had), (float)1.0e-3);
+	gamma = constant_splat(m, 3, (float)(1.0 / 2.2));
+	lit = fadd(m, 3, had, fmul(m, 3, room, fsub(m, 3, constant_splat(m, 3, 1.0f),
+		ext1(m, GLSL_EXP, m->t_v3, fdiv(m, 3, fneg(m, 3, light), room)))));
+	/* (display.hdr: the same below white, and what its shoulder squeezes
+	under white rolled off toward the lights' white instead: xgpu_hdr.h's
+	xgpu_hdr_lights, xgpu_msl.c's dynamic_light_add_hdr) */
+	if (hdr)
+	{
+		unsigned int past = fmax_scalar(m, 3, fsub(m, 3, fadd(m, 3, had, light), constant_splat(m, 3, 1.0f)), 0.0f);
+		unsigned int white_room = constant_splat(m, 3, XGPU_HDR_LIGHTS_WHITE - 1.0f);
+
+		lit = fadd(m, 3, lit, fmul(m, 3, white_room, fsub(m, 3, constant_splat(m, 3, 1.0f),
+			ext1(m, GLSL_EXP, m->t_v3, fdiv(m, 3, fneg(m, 3, past), white_room)))));
+	}
+	store(m, result_variable, ext2(m, GLSL_POW, m->t_v3, lit, gamma));
+	branch(m, after);
+	label_at(m, after);
+	return load(m, m->t_v3, result_variable);
+}
+
 /* ---------- the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT)
 
 A light the slots name is lit through its gel, as the game's gel pass
@@ -5873,6 +6090,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	unsigned int in_motion_current = 0, in_motion_previous = 0, motion_out = 0;
 	int stage;
 
+	lt_shader_on = options->light_transport != 0;
+
 	memset(&state, 0, sizeof(state));
 	state.program = program;
 	state.options = options;
@@ -6102,17 +6321,28 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			shine_variable = local(&m, &state.locals, m.t_v3);
 			store(&m, shine_variable, constant_splat(&m, 3, 0.0f));
 		}
-		linear_variable = local(&m, &state.locals, m.t_v3);
-		/* (linear_variable: the linear light added past the game's lights'
-		gamma sum, dynamic_light_add's linear; another linear light, a
-		bounce's, adds into it before the add) */
-		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable, linear_variable);
-		/* display.rt_bounce: the bounced light, linear, into the linear sum
-		(HALO_LT_E1: the traced flashlight there, added after, linearly) */
-		if (!lt_e1_on())
-			store(&m, linear_variable, rt_bounce_add(&m, &state, load(&m, m.t_v3, linear_variable)));
-		added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, linear_variable), FALSE);
-		added = lt_e1_add(&m, &state, added, 0, p, shaded);
+		/* (the classic light model without the ray-traced lighting:
+		display.ray_traced_lighting, lt_light_model) */
+		if (!lt_light_model())
+		{
+			sum = dynamic_light_sum_classic(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable);
+			added = dynamic_light_add_classic(&m, &state, lit, sum, FALSE);
+		}
+		else
+		{
+			linear_variable = local(&m, &state.locals, m.t_v3);
+			/* (linear_variable: the linear light added past the game's lights'
+			gamma sum, dynamic_light_add's linear; another linear light, a
+			bounce's, adds into it before the add) */
+			sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable,
+				linear_variable);
+			/* display.rt_bounce: the bounced light, linear, into the linear sum
+			(HALO_LT_E1: the traced flashlight there, added after, linearly) */
+			if (!lt_e1_on())
+				store(&m, linear_variable, rt_bounce_add(&m, &state, load(&m, m.t_v3, linear_variable)));
+			added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, linear_variable), FALSE);
+			added = lt_e1_add(&m, &state, added, 0, p, shaded);
+		}
 		/* (a metal's diffuse light darkened: material_read) */
 		if (state.metalness)
 			added = fscale(&m, 3, added, fsub(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, state.metalness,
@@ -6148,8 +6378,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	{
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
-		state.t[3] = shuffle(&m, 4, state.t[3], dynamic_light_add(&m, &state, xyz(&m, state.t[3]),
-			constant_splat(&m, 3, 0.0f), fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
+		state.t[3] = shuffle(&m, 4, state.t[3], !lt_light_model() ? dynamic_light_add_classic(&m, &state,
+			xyz(&m, state.t[3]), fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE) :
+			dynamic_light_add(&m, &state, xyz(&m, state.t[3]), constant_splat(&m, 3, 0.0f),
+			fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
 	}
 	/* (a model's material: its reflection by its occlusion, and a metal's
 	tinted by its base map) */
@@ -6217,7 +6449,15 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	share by the occlusion, before the enhanced dynamic lights add theirs:
 	linear, light - (1 - occlusion) * min(light, INDIRECT); xgpu.h's
 	XGPU_AMBIENT_OCCLUSION_INDIRECT) */
-	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
+	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP && !lt_light_model())
+	{
+		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+
+		/* (classic: the light by the occlusion, without the ray-traced
+		lighting: lt_light_model) */
+		result = shuffle(&m, 4, result, fscale(&m, 3, xyz(&m, result), state.occlusion), rgb);
+	}
+	else if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
 	{
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 		unsigned int light = ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, xyz(&m, result), 0.0f),
@@ -6251,6 +6491,16 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
 		lt_shaded_normal = n;
+		/* (the classic light model without the ray-traced lighting: lt_light_model) */
+		if (!lt_light_model())
+		{
+			sum = dynamic_light_sum_classic(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n,
+				surface_normal, TRUE, 0, 0, 0);
+			lit = dynamic_light_add_classic(&m, &state, xyz(&m, result), fmul(&m, 3, sum,
+				xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
+		}
+		else
+		{
 		linear_variable = local(&m, &state.locals, m.t_v3);
 		/* (linear_variable as the models': the linear light past the sum) */
 		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
@@ -6266,6 +6516,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		lit = lt_e1_add(&m, &state, lit, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3,
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)), 0.0f), constant_splat(&m, 3, 2.2f)),
 			pixel_input(&m, &state, state.in_world_position, m.t_v3), n);
+		}
 		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
 		not under the shoulder, so a lit wall shows them too) */
 		if (state.light_shadows && light_shadows_view())
@@ -8885,19 +9136,21 @@ static int lt_sun_clamp_view(void)
 	return on;
 }
 
-/* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h: E1 and E2 of the one
-light-transport pass): set and not "off", "0" or "false", read once */
+/* the light-transport pass (port/linux/vulkan/xgpu_vulkan_lt.h; HALO_LT_E1
+or display.ray_traced_lighting) on for the shader being made: its options'
+light_transport (xgpu_spirv_pixel_shader sets it) */
+static int lt_shader_on;
+
 static int lt_e1_on(void)
 {
-	static int on = -1;
+	return lt_shader_on;
+}
 
-	if (on < 0)
-	{
-		const char *given = getenv("HALO_LT_E1");
-
-		on = given && *given && strcmp(given, "off") && strcmp(given, "0") && strcmp(given, "false");
-	}
-	return on;
+/* the ray-traced lighting's light model (xgpu.h) for the shader being made:
+with the pass alone; else the classic one, as before it */
+static int lt_light_model(void)
+{
+	return lt_shader_on;
 }
 
 /* an octahedral normal, packSnorm2x16 (world_ao_inputs' folding) */

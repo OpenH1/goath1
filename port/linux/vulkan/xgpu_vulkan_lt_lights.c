@@ -22,6 +22,8 @@ static struct
 	int counts[4];
 	uint32_t frames[4];
 	int received, last_window;
+	/* the pass on: a list received, none saying it is off since */
+	int on;
 	int log_read;
 	FILE *log;
 } lt_lights;
@@ -32,6 +34,17 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 	int window = record->window;
 
 	(void)context;
+	/* (window -1: the pass turned off, port/linux/game/lt_lights.c) */
+	if (window == -1)
+	{
+		if (lt_lights.on)
+			host_logf(HOST_LOG_INFO, "vulkan: the light-transport pass turned off");
+		lt_lights.on = 0;
+		return;
+	}
+	if (!lt_lights.on)
+		host_logf(HOST_LOG_INFO, "vulkan: the light-transport pass turned on (the game's light lists)");
+	lt_lights.on = 1;
 	if (window < 0 || window > 3 || record->count > XGPU_STREAM_LT_LIGHTS_MAXIMUM || (record->count && !lights))
 		return;
 	memcpy(lt_lights.lights[window], lights ? lights : (const void *)lt_lights.lights[window],
@@ -85,4 +98,9 @@ const struct xgpu_stream_lt_light *xgpu_vulkan_lt_lights(int window, int *count,
 int xgpu_vulkan_lt_lights_window(void)
 {
 	return lt_lights.received ? lt_lights.last_window : -1;
+}
+
+int xgpu_vulkan_lt_lights_on(void)
+{
+	return lt_lights.on;
 }

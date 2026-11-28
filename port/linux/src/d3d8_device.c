@@ -5368,8 +5368,9 @@ static struct
 	game's do not: port/linux/game/network_standard.c's
 	network_standard_enhanced_lights_allowed) */
 	BOOL allowed;
-	/* the look: [0] unused (the light model's lights are the game's: xgpu.h);
-	[1] the glow's size (of the
+	/* the look: [0] the lights' brightness, the core (1 / (1 + core x^2)),
+	the spill past white, the models' wrap (the classic light model's: the
+	ray-traced lighting's reads none, xgpu.h); [1] the glow's size (of the
 	light's radius), brightness, softness against what it meets (world
 	units), its least size (debug.dynamic_lights_look; xgpu_spirv.c) */
 	float look[2][4];
@@ -5426,9 +5427,9 @@ arithmetic's rounding */
 
 static void dynamic_lights_read_settings(void)
 {
-	/* ([0] unused since the light model, which adds each light as the game
-	does: xgpu.h) */
-	static const float defaults[2][4] = { { 1.0f, 0.0f, 0.0f, 0.0f }, { 0.22f, 1.2f, 0.12f, 0.035f } };
+	/* ([0] the classic light model's, which the ray-traced lighting's
+	(xgpu.h) does not read) */
+	static const float defaults[2][4] = { { 1.7f, 12.0f, 0.18f, 0.25f }, { 0.22f, 1.2f, 0.12f, 0.035f } };
 	const char *look;
 	BOOL allowed = network_standard_enhanced_lights_allowed() != 0;
 
@@ -6085,6 +6086,9 @@ static void dynamic_lights_flashlight_texels(int count)
 /* the frame's lights (the game's dynamic_lights.c): where they are, as the
 objects are drawn; the camera's position and axes (the glows face it); the
 clusters each light reaches (each cluster's mask of them) */
+/* (port/linux/game/lt_lights.c: the ray-traced lighting on) */
+int lt_lights_pass_on(void);
+
 void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count, const float camera[3],
 	const float right[3], const float up[3], const unsigned int (*cluster_masks)[4])
 {
@@ -6092,6 +6096,9 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	struct xgpu_dynamic_lights_halos *halos = &dynamic_lights.halos;
 	float scales[3], lower[3][XGPU_DYNAMIC_LIGHTS_GRID_X], upper[3][XGPU_DYNAMIC_LIGHTS_GRID_X];
 	int index, axis;
+	/* the ray-traced lighting's light model (xgpu.h; port/linux/game/lt_lights.h),
+	else the classic one */
+	BOOL light_model = lt_lights_pass_on() != 0;
 
 	inputs.lights_count = 0;
 	dynamic_lights.reach_count = 0;
@@ -6124,7 +6131,9 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	if (cluster_masks)
 		memcpy(dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z], cluster_masks, XGPU_DYNAMIC_LIGHTS_CLUSTERS * 16);
 	dynamic_lights_shadowed_texels(count);
-	dynamic_lights_flashlight_texels(count);
+	/* (the ray-traced lighting's light model alone: lt_lights.h) */
+	if (light_model)
+		dynamic_lights_flashlight_texels(count);
 	if (dynamic_lights.world && !dynamic_lights.world_sent)
 	{
 		xgpu_backend_dynamic_lights_world((const void *)dynamic_lights.world, dynamic_lights.world_count);
@@ -6137,7 +6146,7 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 		/* (the light model, xgpu.h: its colour the game's, gamma, as its
 		passes add it; the flashlight's by its gel's tint, as the gel
 		pass's; a panel's linear) */
-		BOOL flashlight = dynamic_lights.flashlight_lit[index] != 0;
+		BOOL flashlight = light_model && dynamic_lights.flashlight_lit[index] != 0;
 		BOOL panel = (light->flags & HALO_DYNAMIC_LIGHT_PANEL) != 0;
 
 		if (!(light->radius > 0.0f))
@@ -6168,14 +6177,16 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 			light->radius;
 		for (axis = 0; axis < 3; axis++)
 		{
-			dynamic_lights.data.color[index][axis] = panel ? powf(light->color[axis], 2.2f) :
+			/* (classic: linear, the display's gamma out) */
+			dynamic_lights.data.color[index][axis] = !light_model ?
+				powf(light->color[axis], 2.2f) * dynamic_lights.look[0][0] : panel ? powf(light->color[axis], 2.2f) :
 				light->color[axis] * (flashlight ? dynamic_lights.gel_tint[axis] : 1.0f);
 			dynamic_lights.data.cone[index][axis] = light->axis[axis];
 			offset[axis] = light->position[axis] - camera[axis];
 		}
 		dynamic_lights.data.color[index][3] = light->cone_offset;
 		dynamic_lights.data.cone[index][3] = light->cone_scale;
-		if (panel)
+		if (panel && light_model)
 			((unsigned int (*)[4])dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z])[XGPU_DYNAMIC_LIGHTS_PANELS][index >> 5] |=
 				1u << (index & 31);
 		dynamic_lights_mark(dynamic_lights.mask, offset, light->radius, scales,
@@ -7292,7 +7303,9 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	RETAINED_TAKE(lights_unreached, flag);
 	flag = dynamic_lights.model_unreached != 0;
 	RETAINED_TAKE(model_unreached, flag);
-	flag = (per_pixel_lighting() != 0) | (per_pixel_lighting_setting() ? 2 : 0);
+	/* (and the ray-traced lighting's light model, which derives a model's
+	draw without the setting otherwise: lt_lights.h) */
+	flag = (per_pixel_lighting() != 0) | (per_pixel_lighting_setting() ? 2 : 0) | (lt_lights_pass_on() ? 4 : 0);
 	RETAINED_TAKE(per_pixel, flag);
 	flag = dynamic_lights_active() != 0;
 	RETAINED_TAKE(lights_active, flag);
@@ -7775,7 +7788,9 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	facts.hdr = hdr_tag(&pipeline_key);
 	/* (a cut-out's depth: no light) */
 	facts.per_pixel = !cutout_depth_drawing && per_pixel_lighting();
-	facts.per_pixel_setting = facts.per_pixel && per_pixel_lighting_setting();
+	/* (without the ray-traced lighting's light model, as the setting were on:
+	lt_lights.h) */
+	facts.per_pixel_setting = facts.per_pixel && (per_pixel_lighting_setting() || !lt_lights_pass_on());
 	facts.lights_active = !cutout_depth_drawing && !lights_unreached_drawing && !dynamic_lights.model_unreached &&
 		dynamic_lights_active();
 	facts.environment = inputs.lights_environment;

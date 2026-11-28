@@ -350,9 +350,9 @@ static uint32_t uniforms_make(void *context, const struct xgpu_metal_stream_unif
 		to->world_ao[0] = from->world_ao[0];
 		to->world_ao[1] = from->world_ao[1];
 		to->world_ao[3] = from->world_ao[3];
-		/* (the enhanced dynamic lights' tint, gamma, as the gel pass multiplies it) */
+		/* (the enhanced dynamic lights' tint, in linear light) */
 		for (stage = 0; stage < 3; stage++)
-			to->dynamic_light_tint[stage] = from->ps_final_c0[stage];
+			to->dynamic_light_tint[stage] = powf(from->ps_final_c0[stage], 2.2f);
 		to->dynamic_light_tint[3] = 1.0f;
 	}
 	if (inputs->blend_color)

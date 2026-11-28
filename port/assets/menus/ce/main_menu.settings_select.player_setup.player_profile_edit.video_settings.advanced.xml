@@ -24,8 +24,8 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_model_detail" x="28" y="185"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_interpolation" x="28" y="206"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/section_10" x="28" y="233"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_ray_tracing" x="28" y="253" platform="desktop android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_shadow_resolution" x="28" y="274"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_shadow_resolution" x="28" y="253"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_contact_shadows" x="28" y="274" platform="desktop android"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_per_pixel_lighting" x="28" y="295"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_dynamic_lights" x="28" y="316" platform="desktop android"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_ambient_occlusion" x="28" y="337" platform="desktop android"/>
@@ -162,33 +162,30 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/section_10_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/labels" string_index="10" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_ray_tracing" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" platform="desktop android" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_label"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_spinner" x="188"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_seg0" x="188" y="1"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_seg1" x="248" y="1"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_seg2" x="308" y="1"/>
-	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/labels" string_index="11" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
-	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_seg0" type="text" controller="1" width="56" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="AUTO" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
-	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_seg1" type="text" controller="1" width="56" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
-	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_seg2" type="text" controller="1" width="56" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
-	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="AUTO|ON|OFF" setting="display.ray_tracing" values="auto|on|off" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
-		<on event="created" run="port setting load"/>
-		<on event="a" run="port setting segment"/>
-	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_shadow_resolution" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/shadow_resolution_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/shadow_resolution_spinner" x="188"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/shadow_resolution_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/labels" string_index="12" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/shadow_resolution_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/labels" string_index="11" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/shadow_resolution_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="XBOX|MEDIUM|HIGH|ULTRA" setting="display.shadow_resolution" values="128|256|512|1024" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="created" run="port setting load"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_contact_shadows" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" platform="desktop android" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_seg1" x="240" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/labels" string_index="12" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_seg1" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="display.contact_shadows" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_per_pixel_lighting" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/per_pixel_lighting_label"/>
@@ -285,8 +282,8 @@
 		<string text="MODEL DETAIL"/>
 		<string text="SMOOTH MOTION"/>
 		<string text="LIGHTING"/>
-		<string text="RAY TRACING"/>
 		<string text="SHADOW QUALITY"/>
+		<string text="CONTACT SHADOWS"/>
 		<string text="SMOOTH LIGHTING"/>
 		<string text="DYNAMIC LIGHTS"/>
 		<string text="AMBIENT OCCLUSION"/>
@@ -306,8 +303,8 @@
 		<string text="How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full."/>
 		<string text="Draws movement smoothly between the game's 30 updates a second, so that it looks fluid at any frame rate. Off shows each update as it is."/>
 		<string text=""/>
-		<string text="Traces light on the graphics card: soft shadows, shade in corners and under things, real reflections, and plasma light bounced off walls. Auto is On where your card supports it. Off draws the game as before."/>
 		<string text="How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky shadow; each step up is crisper, and costs a little more of the graphics card."/>
+		<string text="Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where Ray Traced Shadows are on, which already trace them."/>
 		<string text="Lights characters and weapons smoothly, without the flat facets of the Xbox's lighting, at a small cost."/>
 		<string text="Enhanced: plasma bolts, muzzle flashes and blasts light their surroundings smoothly, with a glow. Classic lights them as the Xbox did.|Classic for everyone in a Pro 2v2 game; yours again after it."/>
 		<string text="World: soft shade where characters, vehicles and scenery meet the level and each other, from the level's shape; the levels keep their own lighting. Ray Traced: the shade of characters and vehicles traced by the graphics card, where it can (else World)."/>

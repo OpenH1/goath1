@@ -1550,7 +1550,9 @@ struct xgpu_stream_rt_bounce
 (~/dev/rt2-realtime-design.md's contract C4; port/linux/game/lt_lights.c,
 whose lt_lights.h has the game's copy of the light, the same: change both):
 count lights (0 to XGPU_STREAM_LT_LIGHTS_MAXIMUM, 144 bytes each) inline at
-lights (none: 0), the window (0 to 3) and the game's count of lists sent */
+lights (none: 0), the window (0 to 3) and the game's count of lists sent.
+A list turns the pass on (display.ray_traced_lighting, where HALO_LT_E1 does
+not say); window -1, with none, turns it off */
 #define XGPU_STREAM_LT_LIGHTS_MAXIMUM 1024
 enum
 {

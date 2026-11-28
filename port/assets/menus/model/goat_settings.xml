@@ -70,6 +70,8 @@
 		<row key="dynamic_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<section key="section_5" title="RAY TRACING"/>
 		<row key="shadows" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<section key="section_6" title="EXPERIMENTAL"/>
+		<row key="ray_traced_lighting" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 	</screen>
 	<screen name="goat/audio" kind="goat" tab="AUDIO">
 		<section key="section_0" title="SOUND"/>

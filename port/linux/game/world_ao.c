@@ -117,6 +117,8 @@ traced through the same scene) */
 int dynamic_lights_flashlight_shadows_on(void);
 /* (display.rt_reflections: rt_reflections.c) */
 int rt_reflections_on(void);
+/* (the ray-traced lighting on: lt_lights.c) */
+int lt_lights_pass_on(void);
 
 /* whether the frame's ray-traced scene is made where this setting is not:
 for display.shadows "ray_traced", the enhanced flashlight's shadow, or
@@ -677,7 +679,7 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 	the occlusion takes: under a sky with an outdoor ambient, where the
 	bake holds the sun's direct light too, up to WORLD_AO_INDIRECT; 0, an
 	interior's bake, all of it: xgpu.h's XGPU_AMBIENT_OCCLUSION_INDIRECT) */
-	world_ao.grid[0][3] = world_proxies_source_sky_outdoor() > 0.0f ? WORLD_AO_INDIRECT : 0.0f;
+	world_ao.grid[0][3] = lt_lights_pass_on() && world_proxies_source_sky_outdoor() > 0.0f ? WORLD_AO_INDIRECT : 0.0f;
 	halo_world_ao_window((float const (*)[4])field, (float const (*)[4])parameters,
 		(float const (*)[3][4])world_ao.proxies, (int)world_ao.count, (float const (*)[4])world_ao.grid,
 		(unsigned int const (*)[4])world_ao.cells);

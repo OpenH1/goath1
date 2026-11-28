@@ -149,6 +149,11 @@ the port's own (light_sources.c's key, which has its kind in its top byte,
 int dynamic_lights_flashlight_shadows_on(void);
 #define DYNAMIC_LIGHTS_COPY_KEY(light_key, number) \
 	(DYNAMIC_LIGHTS_KEY_COPY | ((unsigned long long)(unsigned short)(number) << 32) | ((light_key) & 0xffffffffull))
+/* the flashlight on the models (classic: without the ray-traced lighting's
+light model): how much farther it reaches than its radius, and how much
+brighter (its color, the game's 0 to 1) */
+#define DYNAMIC_LIGHTS_FLASHLIGHT_REACH 2.0f
+#define DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS 1.8f
 
 typedef char dynamic_lights_clusters_fit[HALO_DYNAMIC_LIGHTS_CLUSTERS >= MAXIMUM_CLUSTERS_PER_STRUCTURE ? 1 : -1];
 typedef char dynamic_lights_lights_fit[HALO_DYNAMIC_LIGHTS_MAXIMUM >= MAXIMUM_LIGHTS_PER_WINDOW ? 1 : -1];
@@ -460,7 +465,14 @@ static long dynamic_lights_sources(
 		out->cone_scale = 0.0f;
 		out->cone_offset = 1.0f;
 		out->flags = source->halo ? HALO_DYNAMIC_LIGHT_HALO | HALO_DYNAMIC_LIGHT_PROJECTILE : 0;
-		if ((source->facing.i != 0.0f || source->facing.j != 0.0f || source->facing.k != 0.0f) && source->area > 0.0f)
+		/* (classic: a display's by the cosine off its face, none behind it,
+		as a lit panel shines; another's every way) */
+		if (!lt_lights_pass_on())
+		{
+			out->cone_scale = source->facing.i != 0.0f || source->facing.j != 0.0f || source->facing.k != 0.0f ? 1.0f : 0.0f;
+			out->cone_offset = out->cone_scale != 0.0f ? 0.0f : 1.0f;
+		}
+		else if ((source->facing.i != 0.0f || source->facing.j != 0.0f || source->facing.k != 0.0f) && source->area > 0.0f)
 		{
 			out->cone_scale = 1.0f;
 			out->cone_offset = source->area / _pi;
@@ -535,6 +547,19 @@ void dynamic_lights_submit(
 		out->cone_scale = dynamic_lights.cone_scale[light_index];
 		out->cone_offset = dynamic_lights.cone_offset[light_index];
 		out->flags = dynamic_lights.flags[light_index];
+		/* (classic: the flashlight on the models it lights, as bright as the
+		game's model lighting has it: the enhanced lights' falloff fades out
+		toward the radius, where the game's spotlight is near its full
+		strength; its gel lights the structure in the game's own pass. The
+		ray-traced lighting's light model lights it through its gel instead) */
+		if ((out->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) && (out->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) &&
+			!lt_lights_pass_on())
+		{
+			out->radius *= DYNAMIC_LIGHTS_FLASHLIGHT_REACH;
+			out->color[0] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
+			out->color[1] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
+			out->color[2] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
+		}
 		if (logged < 4 && (out->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) && config_boolean("debug.dynamic_lights_log"))
 		{
 			logged++;
@@ -590,7 +615,8 @@ void dynamic_lights_submit(
 	if (!unlit)
 		total = dynamic_lights_sources(total);
 	dynamic_lights_shadowed(total);
-	dynamic_lights_flashlights(count);
+	if (lt_lights_pass_on())
+		dynamic_lights_flashlights(count);
 	/* (the light-transport pass's list: every light as drawn, by its key, lt_lights.c) */
 	lt_lights_frame(dynamic_lights.lights, dynamic_lights.keys, dynamic_lights.objects, dynamic_lights.owners,
 		dynamic_lights.baked, count, total);
@@ -600,6 +626,7 @@ void dynamic_lights_submit(
 		total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
 	/* (every light's falloff on the structure: the game's distance
 	attenuation, as its gel pass samples it, xgpu.h) */
+	if (lt_lights_pass_on())
 	{
 		void const *attenuation = NULL;
 
@@ -1037,7 +1064,7 @@ int dynamic_lights_flashlight_shadows_on(void)
 
 	if (off < 0)
 		off = getenv("HALO_FLASHLIGHT_SHADOWS_OFF") && strcmp(getenv("HALO_FLASHLIGHT_SHADOWS_OFF"), "0") ? 1 : 0;
-	return !off && flashlight.seen && dynamic_lights.frame - flashlight.seen_frame <= FLASHLIGHT_SCENE_KEEP &&
+	return !off && lt_lights_pass_on() && flashlight.seen && dynamic_lights.frame - flashlight.seen_frame <= FLASHLIGHT_SCENE_KEEP &&
 		halo_dynamic_lights_enhanced() && halo_world_ao_ray_queries();
 }
 

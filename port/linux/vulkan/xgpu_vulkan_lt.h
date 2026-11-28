@@ -34,7 +34,9 @@ enum
 	XGPU_VULKAN_LT_DENOISE,
 };
 
-/* the mode (HALO_LT_E1, read once) */
+/* the mode: HALO_LT_E1 where given (read once; debug), else the game's:
+DENOISE while it sends its light lists (display.ray_traced_lighting:
+xgpu_vulkan_lt_lights_on), OFF until it does and once it says it is off */
 int xgpu_vulkan_lt_mode(void);
 /* the pre-pass's twins' guides (xgpu_spirv.h's C1), which the pass reads
 for the shaded normal */
