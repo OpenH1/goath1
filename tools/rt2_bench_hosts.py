@@ -52,7 +52,6 @@ import time
 from pathlib import Path
 
 import rt2_clips
-import rt2_scorecard
 
 SHARED = "goat-rig/rt2-bench/shared"  # (under the rig's $HOME)
 HOSTS = ("5900x", "omarchy", "bosgame")
@@ -132,7 +131,8 @@ def builder_of(host):
 
 
 def tree_of(host, ref):
-    return rt2_scorecard.build_folder(ref) + (".win" if rt2_clips.windows(host) else "")
+    # (goat-rig's worktree name, rt2_scorecard.build_folder: not imported, it needs numpy)
+    return ref.replace("/", "-") + (".win" if rt2_clips.windows(host) else "")
 
 
 KEY_SCRIPT = """
